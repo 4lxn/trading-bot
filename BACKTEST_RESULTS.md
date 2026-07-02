@@ -1,5 +1,9 @@
 # Backtest results — strategy 8b vs the original strategy 8 vs buy & hold
 
+> Re-verified 2026-07-02 on the pinned dataset
+> `data/btcusdt_1d_verified_20260626.csv` — see `VERIFICATION.md` for the
+> authoritative numbers and the full robustness evidence.
+
 Data: Binance BTCUSDT, **daily** candles, 2017–2026 (full available history).
 Engine: `backtest.py` / `strategy8_replica.py` — signals on the daily close,
 position applied on the next bar (no look-ahead), 0.10% fee + 0.05% slippage
@@ -31,20 +35,20 @@ That reformulation is **strategy 8b** — the final strategy of this project.
 
 | Metric | Strategy 8b | Buy & hold |
 |---|---|---|
-| Total return | **+3659%** | +1301% |
-| Sharpe | **1.28** | 0.79 |
-| Max drawdown | **−57%** | −83% |
+| Total return | **+3164%** | +1303% |
+| Sharpe | **1.23** | 0.79 |
+| Max drawdown | **−58%** | −83% |
 
 ## The honest nuance
 
-Year by year, 8b beats holding in only **4 of 10 years**. In a pure bull
-year, holding wins. The entire advantage comes from **losing little in the
-crashes**:
+In a pure bull year (2020, 2023, 2024), holding wins. The advantage comes
+almost entirely from **losing little in the bad years**:
 
 | Year | Strategy 8b | Buy & hold |
 |---|---|---|
-| 2018 | **−36%** | −73% |
+| 2018 | **−33%** | −73% |
 | 2022 | **−8%** | −64% |
+| 2026 (YTD) | **0%** | −31% |
 
 Read it as **crash insurance with a modest edge**, not a money machine.
 Avoiding the −70/−80% bear markets while capturing most of the bull runs is
@@ -53,7 +57,7 @@ what compounds into the headline numbers above.
 Also remember: the historical total return is inflated by BTC's early
 super-cycle. Expect the *shape* of the edge (protection, roughly half the
 drawdown of holding) to persist — not the magnitude. The walk-forward
-expectation is Sharpe ~0.5–0.7 (see `OPTIMIZATION.md`).
+expectation is Sharpe ~0.5–0.9 (see `OPTIMIZATION.md`).
 
 ## Charts
 

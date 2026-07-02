@@ -5,14 +5,15 @@
 // Rule: be LONG while close > EMA(200) AND RSI(14) > 55; flat otherwise.
 // BTC, DAILY timeframe, long-only, spot, no leverage.
 //
-// Validated in Python (Binance BTCUSDT daily 2017-2026, 100% of capital):
-//   strategy +3659% | Sharpe 1.28 | MaxDD -57%
-//   hold     +1301% | Sharpe 0.79 | MaxDD -83%
-// Confirmed on TradingView (spot, 2018-2026): +2068% vs hold +603%.
+// Verified in Python (Binance BTCUSDT daily 2017-2026, 100% of capital,
+// pinned dataset — see VERIFICATION.md):
+//   strategy +3164% | Sharpe 1.23 | MaxDD -58%
+//   hold     +1303% | Sharpe 0.79 | MaxDD -83%
+// Cross-checked on TradingView (spot, 2018-2026): same shape and magnitude.
 //
-// Honest caveat: it beats hold only ~4 of 10 years. The entire edge comes
-// from losing little in crashes (2018: -36% vs -73%; 2022: -8% vs -64%).
-// Realistic forward expectation (walk-forward): Sharpe ~0.5-0.7 with about
+// Honest caveat: in pure bull years holding wins. The edge comes from
+// losing little in bad years (2018: -33% vs -73%; 2022: -8% vs -64%).
+// Realistic forward expectation (walk-forward): Sharpe ~0.5-0.9 with about
 // half the drawdown of holding.
 //
 // Alerts: enable "BUY signal" / "SELL signal" (or order-fill alerts) to get

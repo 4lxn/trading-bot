@@ -9,20 +9,25 @@ long-only, no leverage.
 
 | 2017–2026, 100% of capital | Strategy 8b | Buy & hold |
 |---|---|---|
-| Total return | **+3659%** | +1301% |
-| Sharpe | **1.28** | 0.79 |
-| Max drawdown | **−57%** | −83% |
+| Total return | **+3164%** | +1303% |
+| Sharpe | **1.23** | 0.79 |
+| Max drawdown | **−58%** | −83% |
 
-**The honest nuance:** year by year it beats holding only 4 of 10 years. The
-entire edge comes from **losing little in the crashes** (2018: −36% vs −73%;
-2022: −8% vs −64%). It is **crash insurance with a modest edge**, not a
-money machine — in a pure bull year, holding wins. Realistic forward
-expectation (walk-forward): **Sharpe ~0.5–0.7 with half the drawdown of
-holding**. The historical return is inflated by BTC's super-cycle; expect
-the protection, not the magnitude.
+*(Re-verified 2026-07-02 on an independent data export — see
+`VERIFICATION.md` for the full evidence: parameter plateau, walk-forward,
+cost/delay stress tests.)*
 
-**Current status (July 2026):** the signal is **OUT** — BTC ~60k is below
-the EMA200 (~79k) with RSI ~29. In cash, sitting out the decline. Correct.
+**The honest nuance:** the edge is concentrated in **losing little in the
+bad years** (2018: −33% vs −73%; 2022: −8% vs −64%). In pure bull years
+(2020, 2023, 2024) holding wins. It is **crash insurance with a modest
+edge**, not a money machine. Realistic forward expectation (walk-forward):
+**Sharpe ~0.5–0.9 with roughly half the drawdown of holding**. The
+historical return is inflated by BTC's super-cycle; expect the protection,
+not the magnitude.
+
+**Current status (last close 2026-06-26):** the signal is **OUT** — BTC
+~60k is below the EMA200 with RSI ~30. In cash, sitting out the decline.
+Correct.
 
 ## How we got here
 
@@ -56,6 +61,8 @@ the EMA200 (~79k) with RSI ~29. In cash, sitting out the decline. Correct.
 | `backtest.py` | Backtest engine — metrics, yearly table, `output/equity_curve.png` |
 | `optimize.py` | Grid search + walk-forward — `output/heatmap_*.png` |
 | `strategy8_replica.py` | Proof that original strategy 8 loses to hold; 8b wins |
+| `robustness.py` + `VERIFICATION.md` | Stress tests + the full verification record |
+| `data/btcusdt_1d_verified_20260626.csv` | Pinned dataset every number was verified on |
 | `common.py` | Shared data/indicator/engine code |
 | `bot_8b.py` + `BOT_README.md` | Execution bot (ccxt): dry-run/testnet/live, idempotent, Telegram |
 | `run.sh` + `launchd/com.trading8b.bot.plist` | 24/7 deployment on the Mac mini |
@@ -71,6 +78,7 @@ source .venv/bin/activate
 python3 backtest.py            # downloads data, prints metrics + current signal
 python3 optimize.py            # heatmaps + walk-forward
 python3 strategy8_replica.py   # strategy 8 vs 8b vs hold
+python3 robustness.py          # cost/delay/sub-window stress tests
 
 cp .env.example .env           # configure the bot (keys, sizing, Telegram)
 ./run.sh                       # one bot cycle (dry-run by default)
