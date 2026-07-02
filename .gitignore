@@ -2,7 +2,7 @@
 .env
 
 # Downloaded market data (except the pinned verification snapshot)
-data/
+data/*
 !data/btcusdt_1d_verified_20260626.csv
 
 # Generated outputs (equity curves, heatmaps, logs)
