@@ -4,6 +4,13 @@ Executes the validated 8b rule on Binance spot: **long while
 `close > EMA(200)` and `RSI(14) > 55` on the daily close; otherwise cash.**
 Long-only, no leverage, no liquidation risk.
 
+**Multi-ticker:** `SYMBOLS=BTC/USDT,ETH/USDT,SOL/USDT` (the validated
+portfolio, see `SWEEP_RESULTS.md`) runs the rule independently per symbol on
+an equal share of capital. In dry-run each symbol gets its own paper bucket
+(`PAPER_USDT` split equally) and the bot appends one row per daily candle to
+`state/paper_equity.csv` — that file is how the paper run gets compared
+against the backtest later.
+
 ## Safety design
 
 - **Idempotent.** Every cycle reads the *real* position from the exchange and
@@ -29,8 +36,11 @@ cp .env.example .env     # then edit .env: mode, keys, sizing, Telegram
 
 Position sizing is controlled in `.env`:
 
-- `ORDER_FRAC` — fraction of free USDT deployed on a buy (1.0 = the backtest).
-- `MAX_USDT` — hard cap per buy order. Start small.
+- `ORDER_FRAC` — fraction of the free USDT bucket deployed on a buy
+  (1.0 = the backtest).
+- `MAX_USDT` — hard cap per buy order. Start small. With several symbols on
+  testnet/live, set it to (capital / number of symbols) to enforce equal weight.
+- `PAPER_USDT` — dry-run starting capital, split equally across `SYMBOLS`.
 
 ## Run manually
 

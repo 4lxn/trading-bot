@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
-"""Execution bot for strategy 8b on Binance spot.
+"""Execution bot for strategy 8b on Binance spot — multi-ticker.
 
-Rule: be LONG while close > EMA(200) and RSI(14) > 55 on the daily close;
-otherwise be in cash. Long-only, spot, no leverage.
+Rule per symbol: be LONG while close > EMA(200) and RSI(14) > 55 on the daily
+close; otherwise be in cash. Long-only, spot, no leverage. With several
+symbols (SYMBOLS=BTC/USDT,ETH/USDT,SOL/USDT) each one runs the rule
+independently on an equal share of the capital — the validated portfolio
+(see SWEEP_RESULTS.md).
 
 Design principles:
 - IDEMPOTENT: every cycle reads the REAL current position from the exchange
   (or the paper state file in dry-run) and only acts if it disagrees with the
   signal. Safe to run every hour, after restarts, or twice by accident.
 - Signals use only CLOSED daily candles — the forming candle is discarded.
-- Three modes (env MODE): dry-run (default, paper position, no keys needed),
+- Three modes (env MODE): dry-run (default, paper positions, no keys needed),
   testnet (Binance spot testnet, fake money), live (real money).
 - Telegram notification on every state change, action and error.
+- dry-run appends one row per daily candle to state/paper_equity.csv so the
+  paper run can be compared against the backtest later.
 
 Usage:
     python3 bot_8b.py            # one cycle, then exit (intended for launchd)
@@ -36,6 +41,7 @@ import common
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_DIR = os.path.join(BASE_DIR, "state")
 PAPER_STATE_FILE = os.path.join(STATE_DIR, "paper_state.json")
+PAPER_EQUITY_FILE = os.path.join(STATE_DIR, "paper_equity.csv")
 
 DUST_USDT = 10.0  # base balance worth less than this counts as "no position"
 CANDLES_NEEDED = 320  # EMA200 warm-up + margin
@@ -60,16 +66,18 @@ def load_env_file(path: str = os.path.join(BASE_DIR, ".env")) -> None:
 
 def config() -> dict:
     load_env_file()
+    symbols_raw = os.environ.get("SYMBOLS", os.environ.get("SYMBOL", "BTC/USDT"))
     return {
         "mode": os.environ.get("MODE", "dry-run").lower(),
         "api_key": os.environ.get("BINANCE_API_KEY", ""),
         "api_secret": os.environ.get("BINANCE_API_SECRET", ""),
-        "symbol": os.environ.get("SYMBOL", "BTC/USDT"),
+        "symbols": [s.strip() for s in symbols_raw.split(",") if s.strip()],
         "ema_len": int(os.environ.get("EMA_LEN", 200)),
         "rsi_len": int(os.environ.get("RSI_LEN", 14)),
         "rsi_threshold": float(os.environ.get("RSI_THRESHOLD", 55)),
         "order_frac": float(os.environ.get("ORDER_FRAC", 1.0)),
         "max_usdt": float(os.environ.get("MAX_USDT", 1000)),
+        "paper_usdt": float(os.environ.get("PAPER_USDT", 1000)),
         "tg_token": os.environ.get("TELEGRAM_BOT_TOKEN", ""),
         "tg_chat": os.environ.get("TELEGRAM_CHAT_ID", ""),
     }
@@ -113,9 +121,9 @@ def make_exchange(cfg: dict) -> ccxt.binance:
     return exchange
 
 
-def compute_signal(exchange: ccxt.binance, cfg: dict) -> tuple[bool, dict]:
+def compute_signal(exchange: ccxt.binance, cfg: dict, symbol: str) -> tuple[bool, dict]:
     """Signal on the last CLOSED daily candle. Returns (is_long, info)."""
-    ohlcv = exchange.fetch_ohlcv(cfg["symbol"], "1d", limit=CANDLES_NEEDED)
+    ohlcv = exchange.fetch_ohlcv(symbol, "1d", limit=CANDLES_NEEDED)
     df = pd.DataFrame(ohlcv, columns=["ts", "open", "high", "low", "close", "volume"])
     df = df.iloc[:-1]  # drop the still-forming candle
     if len(df) < cfg["ema_len"] + 20:
@@ -138,11 +146,23 @@ def compute_signal(exchange: ccxt.binance, cfg: dict) -> tuple[bool, dict]:
 # Position state
 # ---------------------------------------------------------------------------
 
-def paper_state() -> dict:
+def paper_state(cfg: dict) -> dict:
+    """Per-symbol paper buckets: {symbol: {in_position, base, usdt}}.
+
+    New symbols get an equal share of PAPER_USDT. The old single-symbol
+    format ({"in_position", "btc", "usdt"}) is migrated to a BTC/USDT bucket.
+    """
+    state = {}
     if os.path.exists(PAPER_STATE_FILE):
         with open(PAPER_STATE_FILE) as f:
-            return json.load(f)
-    return {"in_position": False, "btc": 0.0, "usdt": 1000.0}
+            state = json.load(f)
+        if "btc" in state:  # pre-multi-ticker format
+            state = {"BTC/USDT": {"in_position": state["in_position"],
+                                  "base": state["btc"], "usdt": state["usdt"]}}
+    share = cfg["paper_usdt"] / len(cfg["symbols"])
+    for symbol in cfg["symbols"]:
+        state.setdefault(symbol, {"in_position": False, "base": 0.0, "usdt": share})
+    return state
 
 
 def save_paper_state(state: dict) -> None:
@@ -151,9 +171,31 @@ def save_paper_state(state: dict) -> None:
         json.dump(state, f, indent=2)
 
 
-def read_position(exchange: ccxt.binance, cfg: dict, price: float) -> tuple[bool, float, float]:
+def log_paper_equity(state: dict, prices: dict, candle) -> None:
+    """One row per daily candle: per-symbol and total paper equity at the close."""
+    symbols = list(prices)
+    values = [state[s]["usdt"] + state[s]["base"] * prices[s] for s in symbols]
+    header = "candle," + ",".join(s.split("/")[0] for s in symbols) + ",total_usdt"
+    os.makedirs(STATE_DIR, exist_ok=True)
+    if os.path.exists(PAPER_EQUITY_FILE):
+        with open(PAPER_EQUITY_FILE) as f:
+            lines = f.readlines()
+        if lines and lines[0].strip() != header:  # SYMBOLS changed: keep old file aside
+            os.rename(PAPER_EQUITY_FILE, PAPER_EQUITY_FILE + ".old")
+        elif lines and lines[-1].startswith(str(candle)):
+            return  # hourly reruns: this candle is already logged
+    if not os.path.exists(PAPER_EQUITY_FILE):
+        with open(PAPER_EQUITY_FILE, "w") as f:
+            f.write(header + "\n")
+    total = sum(values)
+    with open(PAPER_EQUITY_FILE, "a") as f:
+        f.write(f"{candle}," + ",".join(f"{v:.2f}" for v in values) + f",{total:.2f}\n")
+    log(f"[dry-run] paper equity at {candle} close: {total:,.2f} USDT")
+
+
+def read_position(exchange: ccxt.binance, symbol: str, price: float) -> tuple[bool, float, float]:
     """Returns (in_position, base_amount, free_usdt) from the exchange."""
-    base, quote = cfg["symbol"].split("/")
+    base, quote = symbol.split("/")
     balance = exchange.fetch_balance()
     base_amount = float(balance.get(base, {}).get("free", 0) or 0)
     free_quote = float(balance.get(quote, {}).get("free", 0) or 0)
@@ -164,59 +206,77 @@ def read_position(exchange: ccxt.binance, cfg: dict, price: float) -> tuple[bool
 # One cycle
 # ---------------------------------------------------------------------------
 
-def run_cycle(cfg: dict) -> None:
-    exchange = make_exchange(cfg)
-    is_long, info = compute_signal(exchange, cfg)
-    signal_txt = "LONG" if is_long else "OUT"
-    log(f"[{cfg['mode']}] {cfg['symbol']} candle {info['candle']}: close {info['close']:,.0f}, "
-        f"EMA{cfg['ema_len']} {info['ema']:,.0f}, RSI {info['rsi']:.1f} -> signal {signal_txt}")
-
-    if cfg["mode"] == "dry-run":
-        state = paper_state()
-        in_position = state["in_position"]
-        if is_long and not in_position:
-            spend = min(state["usdt"] * cfg["order_frac"], cfg["max_usdt"])
-            state.update(in_position=True, btc=spend / info["close"],
-                         usdt=state["usdt"] - spend)
-            save_paper_state(state)
-            msg = (f"[dry-run] BUY signal: paper-bought {state['btc']:.6f} BTC "
-                   f"at ~{info['close']:,.0f} ({spend:.2f} USDT)")
-            log(msg)
-            telegram(cfg, f"🟢 {msg}")
-        elif not is_long and in_position:
-            proceeds = state["btc"] * info["close"]
-            msg = (f"[dry-run] SELL signal: paper-sold {state['btc']:.6f} BTC "
-                   f"at ~{info['close']:,.0f} ({proceeds:.2f} USDT)")
-            state.update(in_position=False, btc=0.0, usdt=state["usdt"] + proceeds)
-            save_paper_state(state)
-            log(msg)
-            telegram(cfg, f"🔴 {msg}")
-        else:
-            log(f"[dry-run] Signal {signal_txt}, paper position already matches — nothing to do")
-        return
-
-    # testnet / live: read the REAL position, act only on mismatch (idempotent)
-    in_position, base_amount, free_usdt = read_position(exchange, cfg, info["close"])
-    if is_long and not in_position:
-        spend = min(free_usdt * cfg["order_frac"], cfg["max_usdt"])
-        if spend < DUST_USDT:
-            log(f"BUY signal but only {free_usdt:.2f} USDT free — skipping")
-            return
-        amount = exchange.amount_to_precision(cfg["symbol"], spend / info["close"])
-        order = exchange.create_market_buy_order(cfg["symbol"], float(amount))
-        msg = (f"[{cfg['mode']}] BUY executed: {order.get('filled', amount)} "
-               f"{cfg['symbol'].split('/')[0]} (~{spend:.2f} USDT)")
+def paper_symbol_cycle(cfg: dict, state: dict, symbol: str, is_long: bool, info: dict) -> None:
+    bucket = state[symbol]
+    base = symbol.split("/")[0]
+    # Same friction the backtest charges (fee + slippage per side), so the
+    # paper equity curve stays comparable to it.
+    friction = 1 - (common.DEFAULT_FEE + common.DEFAULT_SLIPPAGE)
+    if is_long and not bucket["in_position"]:
+        spend = min(bucket["usdt"] * cfg["order_frac"], cfg["max_usdt"])
+        bucket.update(in_position=True, base=spend * friction / info["close"],
+                      usdt=bucket["usdt"] - spend)
+        save_paper_state(state)
+        msg = (f"[dry-run] BUY signal: paper-bought {bucket['base']:.6f} {base} "
+               f"at ~{info['close']:,.2f} ({spend:.2f} USDT)")
         log(msg)
         telegram(cfg, f"🟢 {msg}")
-    elif not is_long and in_position:
-        amount = exchange.amount_to_precision(cfg["symbol"], base_amount)
-        order = exchange.create_market_sell_order(cfg["symbol"], float(amount))
-        msg = (f"[{cfg['mode']}] SELL executed: {order.get('filled', amount)} "
-               f"{cfg['symbol'].split('/')[0]} at ~{info['close']:,.0f}")
+    elif not is_long and bucket["in_position"]:
+        proceeds = bucket["base"] * info["close"] * friction
+        msg = (f"[dry-run] SELL signal: paper-sold {bucket['base']:.6f} {base} "
+               f"at ~{info['close']:,.2f} ({proceeds:.2f} USDT)")
+        bucket.update(in_position=False, base=0.0, usdt=bucket["usdt"] + proceeds)
+        save_paper_state(state)
         log(msg)
         telegram(cfg, f"🔴 {msg}")
     else:
-        log(f"Signal {signal_txt}, position already matches — nothing to do")
+        log(f"[dry-run] {symbol} signal {'LONG' if is_long else 'OUT'}, "
+            f"paper position already matches — nothing to do")
+
+
+def real_symbol_cycle(exchange: ccxt.binance, cfg: dict, symbol: str,
+                      is_long: bool, info: dict) -> None:
+    """testnet / live: read the REAL position, act only on mismatch (idempotent)."""
+    in_position, base_amount, free_usdt = read_position(exchange, symbol, info["close"])
+    if is_long and not in_position:
+        spend = min(free_usdt * cfg["order_frac"], cfg["max_usdt"])
+        if spend < DUST_USDT:
+            log(f"{symbol} BUY signal but only {free_usdt:.2f} USDT free — skipping")
+            return
+        amount = exchange.amount_to_precision(symbol, spend / info["close"])
+        order = exchange.create_market_buy_order(symbol, float(amount))
+        msg = (f"[{cfg['mode']}] BUY executed: {order.get('filled', amount)} "
+               f"{symbol.split('/')[0]} (~{spend:.2f} USDT)")
+        log(msg)
+        telegram(cfg, f"🟢 {msg}")
+    elif not is_long and in_position:
+        amount = exchange.amount_to_precision(symbol, base_amount)
+        order = exchange.create_market_sell_order(symbol, float(amount))
+        msg = (f"[{cfg['mode']}] SELL executed: {order.get('filled', amount)} "
+               f"{symbol.split('/')[0]} at ~{info['close']:,.2f}")
+        log(msg)
+        telegram(cfg, f"🔴 {msg}")
+    else:
+        log(f"{symbol} signal {'LONG' if is_long else 'OUT'}, position already matches — nothing to do")
+
+
+def run_cycle(cfg: dict) -> None:
+    exchange = make_exchange(cfg)
+    state = paper_state(cfg) if cfg["mode"] == "dry-run" else None
+    prices, last_candle = {}, None
+    for symbol in cfg["symbols"]:
+        is_long, info = compute_signal(exchange, cfg, symbol)
+        prices[symbol], last_candle = info["close"], info["candle"]
+        log(f"[{cfg['mode']}] {symbol} candle {info['candle']}: close {info['close']:,.2f}, "
+            f"EMA{cfg['ema_len']} {info['ema']:,.2f}, RSI {info['rsi']:.1f} "
+            f"-> signal {'LONG' if is_long else 'OUT'}")
+        if cfg["mode"] == "dry-run":
+            paper_symbol_cycle(cfg, state, symbol, is_long, info)
+        else:
+            real_symbol_cycle(exchange, cfg, symbol, is_long, info)
+    if cfg["mode"] == "dry-run":
+        save_paper_state(state)
+        log_paper_equity(state, prices, last_candle)
 
 
 def main() -> None:

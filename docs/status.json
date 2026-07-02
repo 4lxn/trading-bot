@@ -1,0 +1,17 @@
+{
+  "BTC/USDT": {
+    "in_position": false,
+    "base": 0.0,
+    "usdt": 333.3333333333333
+  },
+  "ETH/USDT": {
+    "in_position": false,
+    "base": 0.0,
+    "usdt": 333.3333333333333
+  },
+  "SOL/USDT": {
+    "in_position": false,
+    "base": 0.0,
+    "usdt": 333.3333333333333
+  }
+}
