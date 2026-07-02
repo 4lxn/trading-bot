@@ -40,11 +40,8 @@ import common
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_DIR = os.path.join(BASE_DIR, "state")
-PAPER_STATE_FILE = os.path.join(STATE_DIR, "paper_state.json")
-PAPER_EQUITY_FILE = os.path.join(STATE_DIR, "paper_equity.csv")
 
 DUST_USDT = 10.0  # base balance worth less than this counts as "no position"
-CANDLES_NEEDED = 320  # EMA200 warm-up + margin
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +64,12 @@ def load_env_file(path: str = os.path.join(BASE_DIR, ".env")) -> None:
 def config() -> dict:
     load_env_file()
     symbols_raw = os.environ.get("SYMBOLS", os.environ.get("SYMBOL", "BTC/USDT"))
+    timeframe = os.environ.get("TIMEFRAME", "1d")
+    sfx = "" if timeframe == "1d" else f"_{timeframe}"  # separate state per track
     return {
+        "timeframe": timeframe,
+        "paper_state_file": os.path.join(STATE_DIR, f"paper_state{sfx}.json"),
+        "paper_equity_file": os.path.join(STATE_DIR, f"paper_equity{sfx}.csv"),
         "mode": os.environ.get("MODE", "dry-run").lower(),
         "api_key": os.environ.get("BINANCE_API_KEY", ""),
         "api_secret": os.environ.get("BINANCE_API_SECRET", ""),
@@ -122,9 +124,22 @@ def make_exchange(cfg: dict) -> ccxt.binance:
 
 
 def compute_signal(exchange: ccxt.binance, cfg: dict, symbol: str) -> tuple[bool, dict]:
-    """Signal on the last CLOSED daily candle. Returns (is_long, info)."""
-    ohlcv = exchange.fetch_ohlcv(symbol, "1d", limit=CANDLES_NEEDED)
-    df = pd.DataFrame(ohlcv, columns=["ts", "open", "high", "low", "close", "volume"])
+    """Signal on the last CLOSED candle of cfg['timeframe']. Returns (is_long, info)."""
+    # 3x the EMA span so the ewm warm-up matches the full-history backtest.
+    needed = cfg["ema_len"] * 3 + 120
+    tf_ms = exchange.parse_timeframe(cfg["timeframe"]) * 1000
+    since = exchange.milliseconds() - needed * tf_ms
+    rows = []
+    while True:
+        batch = exchange.fetch_ohlcv(symbol, cfg["timeframe"], since=since, limit=1000)
+        if not batch:
+            break
+        rows.extend(batch)
+        since = batch[-1][0] + 1
+        if len(batch) < 1000:
+            break
+    df = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume"])
+    df = df.drop_duplicates("ts")
     df = df.iloc[:-1]  # drop the still-forming candle
     if len(df) < cfg["ema_len"] + 20:
         raise RuntimeError(f"Not enough closed candles ({len(df)}) to warm up EMA{cfg['ema_len']}")
@@ -133,8 +148,10 @@ def compute_signal(exchange: ccxt.binance, cfg: dict, symbol: str) -> tuple[bool
     rsi_val = common.rsi(close, cfg["rsi_len"]).iloc[-1]
     price = close.iloc[-1]
     is_long = price > ema_val and rsi_val > cfg["rsi_threshold"]
+    stamp = datetime.fromtimestamp(df["ts"].iloc[-1] / 1000, tz=timezone.utc)
     info = {
-        "candle": datetime.fromtimestamp(df["ts"].iloc[-1] / 1000, tz=timezone.utc).date(),
+        # daily candles are identified by date; intraday ones need the time too
+        "candle": stamp.date() if cfg["timeframe"] == "1d" else stamp.strftime("%Y-%m-%d %H:%M"),
         "close": price,
         "ema": ema_val,
         "rsi": rsi_val,
@@ -153,8 +170,8 @@ def paper_state(cfg: dict) -> dict:
     format ({"in_position", "btc", "usdt"}) is migrated to a BTC/USDT bucket.
     """
     state = {}
-    if os.path.exists(PAPER_STATE_FILE):
-        with open(PAPER_STATE_FILE) as f:
+    if os.path.exists(cfg["paper_state_file"]):
+        with open(cfg["paper_state_file"]) as f:
             state = json.load(f)
         if "btc" in state:  # pre-multi-ticker format
             state = {"BTC/USDT": {"in_position": state["in_position"],
@@ -165,30 +182,31 @@ def paper_state(cfg: dict) -> dict:
     return state
 
 
-def save_paper_state(state: dict) -> None:
+def save_paper_state(cfg: dict, state: dict) -> None:
     os.makedirs(STATE_DIR, exist_ok=True)
-    with open(PAPER_STATE_FILE, "w") as f:
+    with open(cfg["paper_state_file"], "w") as f:
         json.dump(state, f, indent=2)
 
 
-def log_paper_equity(state: dict, prices: dict, candle) -> None:
-    """One row per daily candle: per-symbol and total paper equity at the close."""
+def log_paper_equity(cfg: dict, state: dict, prices: dict, candle) -> None:
+    """One row per closed candle: per-symbol and total paper equity at the close."""
+    path = cfg["paper_equity_file"]
     symbols = list(prices)
     values = [state[s]["usdt"] + state[s]["base"] * prices[s] for s in symbols]
     header = "candle," + ",".join(s.split("/")[0] for s in symbols) + ",total_usdt"
     os.makedirs(STATE_DIR, exist_ok=True)
-    if os.path.exists(PAPER_EQUITY_FILE):
-        with open(PAPER_EQUITY_FILE) as f:
+    if os.path.exists(path):
+        with open(path) as f:
             lines = f.readlines()
         if lines and lines[0].strip() != header:  # SYMBOLS changed: keep old file aside
-            os.rename(PAPER_EQUITY_FILE, PAPER_EQUITY_FILE + ".old")
+            os.rename(path, path + ".old")
         elif lines and lines[-1].startswith(str(candle)):
             return  # hourly reruns: this candle is already logged
-    if not os.path.exists(PAPER_EQUITY_FILE):
-        with open(PAPER_EQUITY_FILE, "w") as f:
+    if not os.path.exists(path):
+        with open(path, "w") as f:
             f.write(header + "\n")
     total = sum(values)
-    with open(PAPER_EQUITY_FILE, "a") as f:
+    with open(path, "a") as f:
         f.write(f"{candle}," + ",".join(f"{v:.2f}" for v in values) + f",{total:.2f}\n")
     log(f"[dry-run] paper equity at {candle} close: {total:,.2f} USDT")
 
@@ -216,7 +234,7 @@ def paper_symbol_cycle(cfg: dict, state: dict, symbol: str, is_long: bool, info:
         spend = min(bucket["usdt"] * cfg["order_frac"], cfg["max_usdt"])
         bucket.update(in_position=True, base=spend * friction / info["close"],
                       usdt=bucket["usdt"] - spend)
-        save_paper_state(state)
+        save_paper_state(cfg, state)
         msg = (f"[dry-run] BUY signal: paper-bought {bucket['base']:.6f} {base} "
                f"at ~{info['close']:,.2f} ({spend:.2f} USDT)")
         log(msg)
@@ -226,7 +244,7 @@ def paper_symbol_cycle(cfg: dict, state: dict, symbol: str, is_long: bool, info:
         msg = (f"[dry-run] SELL signal: paper-sold {bucket['base']:.6f} {base} "
                f"at ~{info['close']:,.2f} ({proceeds:.2f} USDT)")
         bucket.update(in_position=False, base=0.0, usdt=bucket["usdt"] + proceeds)
-        save_paper_state(state)
+        save_paper_state(cfg, state)
         log(msg)
         telegram(cfg, f"🔴 {msg}")
     else:
@@ -267,16 +285,16 @@ def run_cycle(cfg: dict) -> None:
     for symbol in cfg["symbols"]:
         is_long, info = compute_signal(exchange, cfg, symbol)
         prices[symbol], last_candle = info["close"], info["candle"]
-        log(f"[{cfg['mode']}] {symbol} candle {info['candle']}: close {info['close']:,.2f}, "
-            f"EMA{cfg['ema_len']} {info['ema']:,.2f}, RSI {info['rsi']:.1f} "
-            f"-> signal {'LONG' if is_long else 'OUT'}")
+        log(f"[{cfg['mode']}] {symbol} {cfg['timeframe']} candle {info['candle']}: "
+            f"close {info['close']:,.2f}, EMA{cfg['ema_len']} {info['ema']:,.2f}, "
+            f"RSI {info['rsi']:.1f} -> signal {'LONG' if is_long else 'OUT'}")
         if cfg["mode"] == "dry-run":
             paper_symbol_cycle(cfg, state, symbol, is_long, info)
         else:
             real_symbol_cycle(exchange, cfg, symbol, is_long, info)
     if cfg["mode"] == "dry-run":
-        save_paper_state(state)
-        log_paper_equity(state, prices, last_candle)
+        save_paper_state(cfg, state)
+        log_paper_equity(cfg, state, prices, last_candle)
 
 
 def main() -> None:

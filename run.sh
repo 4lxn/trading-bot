@@ -23,7 +23,9 @@ fi
     if [ -f state/paper_equity.csv ] && ! cmp -s state/paper_equity.csv docs/paper_equity.csv; then
         cp state/paper_equity.csv docs/paper_equity.csv
         cp state/paper_state.json docs/status.json
-        git add docs/paper_equity.csv docs/status.json
+        # 4h curiosity track rides along on the daily publish, if it exists
+        [ -f state/paper_equity_4h.csv ] && cp state/paper_equity_4h.csv docs/paper_equity_4h.csv
+        git add docs/
         git commit -q -m "paper: equity through $(tail -1 state/paper_equity.csv | cut -d, -f1)"
     fi
     git pull --rebase -q && git push -q

@@ -15,6 +15,7 @@
     --baseline: #c3c2b7;
     --border: rgba(11,11,11,0.10);
     --series-1: #2a78d6;
+    --series-2: #1baf7a;
     --delta-up: #006300;
     --delta-down: #d03b3b;
     --status-good: #0ca30c;
@@ -30,6 +31,7 @@
       --baseline: #383835;
       --border: rgba(255,255,255,0.10);
       --series-1: #3987e5;
+      --series-2: #199e70;
       --delta-up: #0ca30c;
       --delta-down: #d03b3b;
       --status-good: #0ca30c;
@@ -74,6 +76,8 @@
   }
   .tooltip .t-date { color: var(--text-secondary); margin-bottom: 4px; }
   .tooltip .t-row { display: flex; justify-content: space-between; gap: 16px; font-variant-numeric: tabular-nums; }
+  .legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
+  .legend .key { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 6px; border-radius: 1px; }
   details { margin-bottom: 16px; }
   summary { cursor: pointer; font-size: 13px; color: var(--text-secondary); }
   details table { margin-top: 8px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; }
@@ -90,6 +94,10 @@
 
   <div class="card">
     <h2>Curva de equity (USDT)</h2>
+    <div class="legend" id="legend" style="display:none">
+      <span><span class="key" style="background:var(--series-1)"></span>Diario (8b)</span>
+      <span><span class="key" style="background:var(--series-2)"></span>4h (experimento)</span>
+    </div>
     <div id="chart"></div>
     <div class="tooltip" id="tooltip"></div>
   </div>
@@ -109,6 +117,9 @@
     (la misma del backtest). La señal se evalúa sobre la vela diaria cerrada:
     long mientras cierre &gt; EMA(200) y RSI(14) &gt; 55; si no, cash.
     Se actualiza una vez al día tras el cierre de 00:00 UTC.
+    La serie «4h (experimento)» es un track paralelo por curiosidad
+    (EMA 600 barras / RSI 84 &gt; 50 en velas de 4h, capital de papel propio);
+    el backtest 2017–2026 ya mostró que 4h rinde peor que diario.
   </p>
 </div>
 
@@ -116,20 +127,36 @@
 const fmt  = n => n.toLocaleString("es", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtS = n => (n >= 0 ? "+" : "−") + fmt(Math.abs(n));
 
-async function load() {
-  const [csvR, stR] = await Promise.all([fetch("paper_equity.csv"), fetch("status.json")]);
-  if (!csvR.ok) throw new Error("no se pudo cargar paper_equity.csv");
-  const lines = (await csvR.text()).trim().split("\n");
+function parseCsv(text) {
+  const lines = text.trim().split("\n");
   const cols = lines[0].split(",");                       // candle,BTC,ETH,SOL,total_usdt
   const rows = lines.slice(1).map(l => {
     const p = l.split(",");
     return { date: p[0], vals: p.slice(1).map(Number) };  // vals aligned with cols[1..]
   });
-  const status = stR.ok ? await stR.json() : {};
-  return { cols, rows, status };
+  return { cols, rows };
 }
 
-function tiles(rows) {
+async function load() {
+  const [csvR, stR, altR] = await Promise.all([
+    fetch("paper_equity.csv"), fetch("status.json"), fetch("paper_equity_4h.csv"),
+  ]);
+  if (!csvR.ok) throw new Error("no se pudo cargar paper_equity.csv");
+  const { cols, rows } = parseCsv(await csvR.text());
+  const status = stR.ok ? await stR.json() : {};
+  // 4h track logs one row per 4h candle ("YYYY-MM-DD HH:MM"); keep the last
+  // value of each day so it aligns with the daily series.
+  let alt = null;
+  if (altR.ok) {
+    const byDay = new Map();
+    for (const r of parseCsv(await altR.text()).rows)
+      byDay.set(r.date.slice(0, 10), r.vals[r.vals.length - 1]);
+    if (byDay.size) alt = byDay;
+  }
+  return { cols, rows, status, alt };
+}
+
+function tiles(rows, alt) {
   const total = r => r.vals[r.vals.length - 1];
   const start = total(rows[0]), now = total(rows[rows.length - 1]);
   const pnl = now - start, pct = (now / start - 1) * 100;
@@ -137,6 +164,14 @@ function tiles(rows) {
   for (const r of rows) { peak = Math.max(peak, total(r)); dd = Math.min(dd, total(r) / peak - 1); }
   const days = rows.length;
   const cls = pnl >= 0 ? "up" : "down";
+  let altTile = "";
+  if (alt) {
+    const av = [...alt.values()], a0 = av[0], a1 = av[av.length - 1];
+    const acls = a1 - a0 >= 0 ? "up" : "down";
+    altTile = `<div class="tile"><div class="label">Equity 4h (experimento)</div>
+      <div class="value">$${fmt(a1)}</div>
+      <div class="delta ${acls}">${fmtS((a1 / a0 - 1) * 100)}% desde el inicio</div></div>`;
+  }
   document.getElementById("tiles").innerHTML = `
     <div class="tile"><div class="label">Equity actual</div>
       <div class="value hero">$${fmt(now)}</div></div>
@@ -147,14 +182,15 @@ function tiles(rows) {
       <div class="value">${fmt(dd * 100)}%</div></div>
     <div class="tile"><div class="label">Días de paper</div>
       <div class="value">${days}</div>
-      <div class="delta">desde ${rows[0].date}</div></div>`;
+      <div class="delta">desde ${rows[0].date}</div></div>${altTile}`;
 }
 
-function chart(cols, rows) {
+function chart(cols, rows, alt) {
   const W = 840, H = 300, m = { t: 16, r: 16, b: 28, l: 56 };
   const iw = W - m.l - m.r, ih = H - m.t - m.b;
   const total = r => r.vals[r.vals.length - 1];
-  const ys = rows.map(total);
+  const altAt = r => alt ? alt.get(r.date.slice(0, 10)) : undefined;
+  const ys = rows.map(total).concat(alt ? [...alt.values()] : []);
   let lo = Math.min(...ys), hi = Math.max(...ys);
   if (hi - lo < hi * 0.02) { const p = hi * 0.01 || 1; lo -= p; hi += p; }  // flat/1-point guard
   const step = niceStep((hi - lo) / 4);
@@ -178,12 +214,25 @@ function chart(cols, rows) {
        <polyline points="${pts}" fill="none" stroke="var(--series-1)" stroke-width="2"
          stroke-linejoin="round" stroke-linecap="round"/>` : "";
   const li = rows.length - 1;
+  let altLine = "", altEnd = "";
+  if (alt) {
+    document.getElementById("legend").style.display = "flex";
+    const apts = rows.map((r, i) => altAt(r) !== undefined ? `${x(i)},${y(altAt(r))}` : null)
+                     .filter(Boolean);
+    if (apts.length > 1)
+      altLine = `<polyline points="${apts.join(" ")}" fill="none" stroke="var(--series-2)"
+                   stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    if (apts.length)
+      altEnd = `<circle cx="${apts[apts.length - 1].split(",")[0]}"
+                  cy="${apts[apts.length - 1].split(",")[1]}" r="4" fill="var(--series-2)"
+                  stroke="var(--surface-1)" stroke-width="2"/>`;
+  }
   const end = `<circle cx="${x(li)}" cy="${y(total(rows[li]))}" r="4" fill="var(--series-1)"
                  stroke="var(--surface-1)" stroke-width="2"/>`;
   const ch = document.getElementById("chart");
   ch.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">
     ${g}<line x1="${m.l}" y1="${y(lo)}" x2="${W - m.r}" y2="${y(lo)}" stroke="var(--baseline)" stroke-width="1"/>
-    ${line}${end}<line id="xh" x1="0" y1="${m.t}" x2="0" y2="${m.t + ih}" stroke="var(--baseline)"
+    ${line}${altLine}${end}${altEnd}<line id="xh" x1="0" y1="${m.t}" x2="0" y2="${m.t + ih}" stroke="var(--baseline)"
       stroke-width="1" visibility="hidden"/>
     <circle id="hdot" r="4" fill="var(--series-1)" stroke="var(--surface-1)" stroke-width="2" visibility="hidden"/>
     <rect x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent" id="hit"/></svg>`;
@@ -198,8 +247,10 @@ function chart(cols, rows) {
     const r = rows[i];
     xh.setAttribute("x1", x(i)); xh.setAttribute("x2", x(i)); xh.setAttribute("visibility", "visible");
     hdot.setAttribute("cx", x(i)); hdot.setAttribute("cy", y(total(r))); hdot.setAttribute("visibility", "visible");
+    const av = altAt(r);
     tip.innerHTML = `<div class="t-date">${r.date}</div>` + cols.slice(1).map((c, j) =>
-      `<div class="t-row"><span>${c === "total_usdt" ? "Total" : c}</span><b>$${fmt(r.vals[j])}</b></div>`).join("");
+      `<div class="t-row"><span>${c === "total_usdt" ? "Total diario" : c}</span><b>$${fmt(r.vals[j])}</b></div>`).join("")
+      + (av !== undefined ? `<div class="t-row"><span>Total 4h</span><b>$${fmt(av)}</b></div>` : "");
     tip.style.display = "block";
     const card = ch.parentElement.getBoundingClientRect();
     let tx = e.clientX - card.left + 14;
@@ -242,11 +293,11 @@ function datatable(cols, rows) {
   document.getElementById("datatable").innerHTML = `<thead>${head}</thead><tbody>${body}</tbody>`;
 }
 
-load().then(({ cols, rows, status }) => {
+load().then(({ cols, rows, status, alt }) => {
   document.getElementById("subtitle").textContent =
     `BTC + ETH + SOL · dry-run · última vela: ${rows[rows.length - 1].date}`;
-  tiles(rows);
-  chart(cols, rows);
+  tiles(rows, alt);
+  chart(cols, rows, alt);
   positions(cols, rows, status);
   datatable(cols, rows);
 }).catch(e => {

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd job: 4h curiosity track (permanently dry-run), hourly at minute 7.
+  Install: replace /Users/YOURUSER/trading-bot (2 places), then
+    cp launchd/com.trading8b.bot4h.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.trading8b.bot4h.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.trading8b.bot4h</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/YOURUSER/trading-bot/run_4h.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/YOURUSER/trading-bot</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Minute</key>
+        <integer>7</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/com.trading8b.bot4h.out</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/com.trading8b.bot4h.err</string>
+</dict>
+</plist>
