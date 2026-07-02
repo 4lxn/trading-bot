@@ -1,0 +1,21 @@
+//@version=5
+// HISTORICAL (superseded by 08b_trend_rsi_state.pine — kept for reference).
+// Verdict: one of only two 5m strategies with any positive expectancy, but
+// far too small — on the 5m timeframe fees + slippage eat the edge.
+strategy("01 EMA Cross (5m)", overlay=true, initial_capital=10000,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=100,
+     commission_type=strategy.commission.percent, commission_value=0.1)
+
+fastLen = input.int(9, "Fast EMA")
+slowLen = input.int(21, "Slow EMA")
+
+fastEma = ta.ema(close, fastLen)
+slowEma = ta.ema(close, slowLen)
+
+if ta.crossover(fastEma, slowEma)
+    strategy.entry("Long", strategy.long)
+if ta.crossunder(fastEma, slowEma)
+    strategy.close("Long")
+
+plot(fastEma, "Fast EMA", color=color.teal)
+plot(slowEma, "Slow EMA", color=color.orange)

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd job: run strategy 8b bot once per hour, and once at load/boot.
+
+  Install on the Mac mini:
+    1. Replace /Users/YOURUSER/trading-bot below (2 places) with the real repo path.
+    2. cp launchd/com.trading8b.bot.plist ~/Library/LaunchAgents/
+    3. launchctl load ~/Library/LaunchAgents/com.trading8b.bot.plist
+
+  The bot is idempotent, so hourly runs + RunAtLoad are safe: it only trades
+  when the real position disagrees with the daily signal.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.trading8b.bot</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/YOURUSER/trading-bot/run.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/YOURUSER/trading-bot</string>
+
+    <!-- Run at minute 5 of every hour (just after candle data settles) -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Minute</key>
+        <integer>5</integer>
+    </dict>
+
+    <!-- Also run once when loaded / after reboot, to catch up immediately -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- run.sh already appends to logs/bot.log; these catch launchd-level errors -->
+    <key>StandardOutPath</key>
+    <string>/tmp/com.trading8b.bot.out</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/com.trading8b.bot.err</string>
+</dict>
+</plist>

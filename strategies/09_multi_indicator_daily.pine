@@ -1,0 +1,27 @@
+//@version=5
+// HISTORICAL (superseded by 08b_trend_rsi_state.pine — kept for reference).
+// Verdict: not profitable in the <1 year window tested — an invalid sample
+// size anyway. Kept as part of the 07-10 multi-indicator exploration.
+strategy("09 Multi-Indicator Long Only (Daily)", overlay=true, initial_capital=10000,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=100,
+     commission_type=strategy.commission.percent, commission_value=0.1)
+
+emaFastLen = input.int(50, "Fast EMA")
+emaSlowLen = input.int(200, "Slow EMA")
+rsiLen = input.int(14, "RSI length")
+rsiMin = input.float(50, "RSI minimum")
+
+emaFast = ta.ema(close, emaFastLen)
+emaSlow = ta.ema(close, emaSlowLen)
+rsiValue = ta.rsi(close, rsiLen)
+
+longCondition = emaFast > emaSlow and close > emaFast and rsiValue > rsiMin
+exitCondition = close < emaFast or emaFast < emaSlow
+
+if longCondition and strategy.position_size == 0
+    strategy.entry("Long", strategy.long)
+if exitCondition and strategy.position_size > 0
+    strategy.close("Long")
+
+plot(emaFast, "EMA 50", color=color.teal)
+plot(emaSlow, "EMA 200", color=color.orange)

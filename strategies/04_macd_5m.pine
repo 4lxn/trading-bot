@@ -1,0 +1,22 @@
+//@version=5
+// HISTORICAL (superseded by 08b_trend_rsi_state.pine — kept for reference).
+// Verdict: the other 5m strategy with marginal positive expectancy — still
+// not worth trading after realistic fees and slippage.
+strategy("04 MACD (5m)", overlay=false, initial_capital=10000,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=100,
+     commission_type=strategy.commission.percent, commission_value=0.1)
+
+fastLen = input.int(12, "Fast length")
+slowLen = input.int(26, "Slow length")
+signalLen = input.int(9, "Signal length")
+
+[macdLine, signalLine, hist] = ta.macd(close, fastLen, slowLen, signalLen)
+
+if ta.crossover(macdLine, signalLine)
+    strategy.entry("Long", strategy.long)
+if ta.crossunder(macdLine, signalLine)
+    strategy.close("Long")
+
+plot(macdLine, "MACD", color=color.teal)
+plot(signalLine, "Signal", color=color.orange)
+plot(hist, "Histogram", style=plot.style_columns, color=hist >= 0 ? color.green : color.red)

@@ -1,0 +1,26 @@
+//@version=5
+// HISTORICAL (superseded by 08b_trend_rsi_state.pine — kept for reference).
+// Verdict: not profitable in the <1 year window tested — but note that a
+// <1 year test is NOT valid evidence (tiny sample; the EMA200 alone needs
+// 200 bars to warm up). The idea evolved into strategies 8/8b on daily.
+strategy("07 Multi-Indicator Long Only (4h)", overlay=true, initial_capital=10000,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=100,
+     commission_type=strategy.commission.percent, commission_value=0.1)
+
+emaLen = input.int(200, "Trend EMA")
+rsiLen = input.int(14, "RSI length")
+rsiMin = input.float(50, "RSI minimum")
+
+emaValue = ta.ema(close, emaLen)
+rsiValue = ta.rsi(close, rsiLen)
+[macdLine, signalLine, _] = ta.macd(close, 12, 26, 9)
+
+longCondition = close > emaValue and rsiValue > rsiMin and macdLine > signalLine
+exitCondition = close < emaValue or macdLine < signalLine
+
+if longCondition and strategy.position_size == 0
+    strategy.entry("Long", strategy.long)
+if exitCondition and strategy.position_size > 0
+    strategy.close("Long")
+
+plot(emaValue, "EMA 200", color=color.orange)

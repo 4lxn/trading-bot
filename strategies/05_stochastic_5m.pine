@@ -1,0 +1,25 @@
+//@version=5
+// HISTORICAL (superseded by 08b_trend_rsi_state.pine — kept for reference).
+// Verdict: not profitable on BTC 5m.
+strategy("05 Stochastic (5m)", overlay=false, initial_capital=10000,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=100,
+     commission_type=strategy.commission.percent, commission_value=0.1)
+
+kLen = input.int(14, "%K length")
+kSmooth = input.int(3, "%K smoothing")
+dSmooth = input.int(3, "%D smoothing")
+oversold = input.float(20, "Oversold level")
+overbought = input.float(80, "Overbought level")
+
+k = ta.sma(ta.stoch(close, high, low, kLen), kSmooth)
+d = ta.sma(k, dSmooth)
+
+if ta.crossover(k, d) and k < oversold
+    strategy.entry("Long", strategy.long)
+if ta.crossunder(k, d) and k > overbought
+    strategy.close("Long")
+
+plot(k, "%K", color=color.teal)
+plot(d, "%D", color=color.orange)
+hline(oversold)
+hline(overbought)

@@ -1,0 +1,22 @@
+# Secrets — never commit API keys
+.env
+
+# Downloaded market data
+data/
+
+# Generated outputs (equity curves, heatmaps, logs)
+output/
+logs/
+*.log
+
+# Bot runtime state
+state/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# macOS
+.DS_Store

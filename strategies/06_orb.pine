@@ -1,0 +1,33 @@
+//@version=5
+// HISTORICAL (superseded by 08b_trend_rsi_state.pine — kept for reference).
+// Verdict: opening range breakout did not convince in backtest on BTC.
+strategy("06 Opening Range Breakout", overlay=true, initial_capital=10000,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=100,
+     commission_type=strategy.commission.percent, commission_value=0.1)
+
+rangeMinutes = input.int(30, "Opening range minutes", minval=5)
+sessionStart = input.session("0000-0030", "Opening range session (UTC)")
+
+inRange = not na(time(timeframe.period, sessionStart, "UTC"))
+
+var float rangeHigh = na
+var float rangeLow = na
+newDay = ta.change(time("D")) != 0
+if newDay
+    rangeHigh := na
+    rangeLow := na
+if inRange
+    rangeHigh := na(rangeHigh) ? high : math.max(rangeHigh, high)
+    rangeLow := na(rangeLow) ? low : math.min(rangeLow, low)
+
+longBreakout = not inRange and not na(rangeHigh) and ta.crossover(close, rangeHigh)
+if longBreakout and strategy.position_size == 0
+    strategy.entry("Long", strategy.long)
+// Exit at the end of the day or if price falls back below the range low
+if strategy.position_size > 0 and (not na(rangeLow) and close < rangeLow)
+    strategy.close("Long")
+if newDay
+    strategy.close("Long")
+
+plot(rangeHigh, "Range high", color=color.green, style=plot.style_linebr)
+plot(rangeLow, "Range low", color=color.red, style=plot.style_linebr)

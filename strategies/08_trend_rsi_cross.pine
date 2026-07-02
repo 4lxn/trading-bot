@@ -1,0 +1,38 @@
+//@version=5
+// HISTORICAL (superseded by 08b_trend_rsi_state.pine — kept for reference).
+// Verdict: KEY FINDING of the project. As written here — crossover ENTRY +
+// ATR trailing stop — this does NOT beat buy & hold on BTC daily 2017-2026.
+// The same idea reformulated as a STATE rule ("be long while close > EMA200
+// and RSI > 55") is what wins: that is strategy 8b.
+// See strategy8_replica.py for the Python comparison.
+strategy("08 Trend + RSI Crossover Entry (Daily)", overlay=true, initial_capital=10000,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=100,
+     commission_type=strategy.commission.percent, commission_value=0.1)
+
+emaLen = input.int(200, "Trend EMA")
+rsiLen = input.int(14, "RSI length")
+rsiThreshold = input.float(55, "RSI entry threshold")
+atrLen = input.int(14, "ATR length")
+atrMult = input.float(3.0, "ATR trailing multiplier")
+
+emaValue = ta.ema(close, emaLen)
+rsiValue = ta.rsi(close, rsiLen)
+atrValue = ta.atr(atrLen)
+
+entrySignal = ta.crossover(rsiValue, rsiThreshold) and close > emaValue
+
+var float highestClose = na
+if strategy.position_size > 0
+    highestClose := math.max(nz(highestClose, close), close)
+else
+    highestClose := na
+
+trailStop = highestClose - atrMult * atrValue
+
+if entrySignal and strategy.position_size == 0
+    strategy.entry("Long", strategy.long)
+if strategy.position_size > 0 and (close < trailStop or close < emaValue)
+    strategy.close("Long")
+
+plot(emaValue, "EMA 200", color=color.orange)
+plot(strategy.position_size > 0 ? trailStop : na, "Trailing stop", color=color.red, style=plot.style_linebr)
