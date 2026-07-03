@@ -38,7 +38,10 @@ STATE_DIR = os.path.join(BASE_DIR, "state")
 PAPER_STATE_FILE = os.path.join(STATE_DIR, "paper_state.json")
 
 DUST_USDT = 10.0  # base balance worth less than this counts as "no position"
-CANDLES_NEEDED = 320  # EMA200 warm-up + margin
+# 1000 candles (Binance's max per request) so the EMA200 converges: with only
+# ~320 candles the EMA still carries ~4% weight from unseen history, which
+# flipped the signal on 3 of 1250 replayed days near the threshold.
+CANDLES_NEEDED = 1000
 
 
 # ---------------------------------------------------------------------------
