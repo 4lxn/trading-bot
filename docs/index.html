@@ -19,6 +19,8 @@
     --delta-up: #006300;
     --delta-down: #d03b3b;
     --status-good: #0ca30c;
+    --warn-bg: #fdf0d4;
+    --warn-fg: #7a5a00;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -35,6 +37,8 @@
       --delta-up: #0ca30c;
       --delta-down: #d03b3b;
       --status-good: #0ca30c;
+      --warn-bg: #3a2f10;
+      --warn-fg: #e8c268;
     }
   }
   * { box-sizing: border-box; }
@@ -52,8 +56,8 @@
     border-radius: 10px; padding: 14px 16px;
   }
   .tile .label { font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; }
-  .tile .value { font-size: 26px; font-weight: 600; }
-  .tile .value.hero { font-size: 34px; }
+  .tile .value { font-size: 24px; font-weight: 600; }
+  .tile .value.hero { font-size: 28px; }
   .tile .delta { font-size: 13px; margin-top: 2px; }
   .up   { color: var(--delta-up); }
   .down { color: var(--delta-down); }
@@ -61,13 +65,23 @@
     background: var(--surface-1); border: 1px solid var(--border);
     border-radius: 10px; padding: 16px; margin-bottom: 16px; position: relative;
   }
-  .card h2 { font-size: 14px; font-weight: 600; margin: 0 0 12px; }
+  .card h2 { font-size: 14px; font-weight: 600; margin: 0 0 4px; }
+  .card .meta { font-size: 12px; color: var(--text-muted); margin: 0 0 12px; }
+  .chip {
+    display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    background: var(--grid); color: var(--text-secondary); vertical-align: middle; margin-left: 6px;
+  }
+  .chip.warn { background: var(--warn-bg); color: var(--warn-fg); font-weight: 600; }
   svg text { font-family: inherit; font-size: 11px; fill: var(--text-muted); font-variant-numeric: tabular-nums; }
   table { width: 100%; border-collapse: collapse; font-size: 14px; }
   th { text-align: left; font-size: 12px; color: var(--text-secondary); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--grid); }
   td { padding: 8px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
   tr:last-child td { border-bottom: none; }
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: baseline; }
+  .scroll { max-height: 320px; overflow-y: auto; }
+  .side-buy { color: var(--delta-up); font-weight: 600; }
+  .side-sell { color: var(--delta-down); font-weight: 600; }
+  .empty { color: var(--text-muted); font-size: 13px; padding: 8px 0; }
   .tooltip {
     position: absolute; pointer-events: none; display: none;
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
@@ -76,8 +90,6 @@
   }
   .tooltip .t-date { color: var(--text-secondary); margin-bottom: 4px; }
   .tooltip .t-row { display: flex; justify-content: space-between; gap: 16px; font-variant-numeric: tabular-nums; }
-  .legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
-  .legend .key { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 6px; border-radius: 1px; }
   details { margin-bottom: 16px; }
   summary { cursor: pointer; font-size: 13px; color: var(--text-secondary); }
   details table { margin-top: 8px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; }
@@ -88,23 +100,35 @@
 <body>
 <div class="wrap">
   <h1>Estrategia 8b — paper trading</h1>
-  <p class="sub" id="subtitle">BTC + ETH + SOL · dry-run · cargando…</p>
+  <p class="sub" id="subtitle">BTC + ETH + SOL · cargando…</p>
 
   <div class="tiles" id="tiles"></div>
 
   <div class="card">
-    <h2>Curva de equity (USDT)</h2>
-    <div class="legend" id="legend" style="display:none">
-      <span><span class="key" style="background:var(--series-1)"></span>Diario (8b)</span>
-      <span><span class="key" style="background:var(--series-2)"></span>4h (experimento)</span>
-    </div>
-    <div id="chart"></div>
-    <div class="tooltip" id="tooltip"></div>
+    <h2>Curva de equity — diario (8b)<span id="chip-1d"></span></h2>
+    <p class="meta" id="meta-1d"></p>
+    <div id="chart-1d"></div>
+    <div class="tooltip" id="tip-1d"></div>
   </div>
 
   <div class="card">
-    <h2>Posiciones</h2>
-    <table id="positions"><tbody></tbody></table>
+    <h2>Señales — diario<span class="chip" id="rule-1d"></span></h2>
+    <p class="meta">Por qué el bot está dentro o fuera de cada activo, sobre la última vela diaria cerrada.</p>
+    <table id="signals-1d"><tbody></tbody></table>
+  </div>
+
+  <div class="card">
+    <h2>Operaciones (paper)</h2>
+    <p class="meta">Todas las compras y ventas ejecutadas por el bot, la más reciente primero. Si no hay filas nuevas, no ha operado — con la señal en OUT y sin posición, lo correcto es no hacer nada.</p>
+    <div class="scroll"><table id="trades"><tbody></tbody></table></div>
+  </div>
+
+  <div class="card">
+    <h2>Experimento 4h<span id="chip-4h"></span></h2>
+    <p class="meta" id="meta-4h">Track paralelo de curiosidad (EMA 600 barras / RSI 84 &gt; 50 en velas de 4h, capital de papel propio). El backtest ya mostró que 4h rinde peor que diario — esto existe para verlo en vivo.</p>
+    <div id="chart-4h"></div>
+    <div class="tooltip" id="tip-4h"></div>
+    <table id="signals-4h" style="margin-top:12px"><tbody></tbody></table>
   </div>
 
   <details>
@@ -114,85 +138,83 @@
 
   <p class="foot">
     Modo dry-run: posiciones de papel con fricción simulada de 0,15% por lado
-    (la misma del backtest). La señal se evalúa sobre la vela diaria cerrada:
-    long mientras cierre &gt; EMA(200) y RSI(14) &gt; 55; si no, cash.
-    Se actualiza una vez al día tras el cierre de 00:00 UTC.
-    La serie «4h (experimento)» es un track paralelo por curiosidad
-    (EMA 600 barras / RSI 84 &gt; 50 en velas de 4h, capital de papel propio);
-    el backtest 2017–2026 ya mostró que 4h rinde peor que diario.
+    (la misma del backtest). Señal diaria: long mientras cierre &gt; EMA(200)
+    y RSI(14) &gt; 55; si no, cash. El bot corre cada hora en el Mac y publica
+    aquí cuando hay datos nuevos: la serie diaria tras el cierre de 00:00 UTC,
+    la de 4h como máximo ~1 h tras cada cierre de vela 4h. Si un track se
+    retrasa más de un ciclo, su cabecera muestra un aviso ⚠.
   </p>
 </div>
 
 <script>
 const fmt  = n => n.toLocaleString("es", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtS = n => (n >= 0 ? "+" : "−") + fmt(Math.abs(n));
+const fmtP = (n, d = 4) => n.toLocaleString("es", { maximumFractionDigits: n >= 100 ? 2 : d });
 
 function parseCsv(text) {
   const lines = text.trim().split("\n");
-  const cols = lines[0].split(",");                       // candle,BTC,ETH,SOL,total_usdt
+  const cols = lines[0].split(",");
   const rows = lines.slice(1).map(l => {
     const p = l.split(",");
-    return { date: p[0], vals: p.slice(1).map(Number) };  // vals aligned with cols[1..]
+    return { date: p[0], vals: p.slice(1).map(Number), raw: p };
   });
   return { cols, rows };
 }
 
+async function get(url, kind) {
+  const r = await fetch(url, { cache: "no-store" });
+  if (!r.ok) return null;
+  return kind === "json" ? r.json() : parseCsv(await r.text());
+}
+
 async function load() {
-  const [csvR, stR, altR] = await Promise.all([
-    fetch("paper_equity.csv"), fetch("status.json"), fetch("paper_equity_4h.csv"),
+  const [eq, eq4, sig, sig4, tr, tr4, st] = await Promise.all([
+    get("paper_equity.csv"), get("paper_equity_4h.csv"),
+    get("signals.json", "json"), get("signals_4h.json", "json"),
+    get("trades.csv"), get("trades_4h.csv"), get("status.json", "json"),
   ]);
-  if (!csvR.ok) throw new Error("no se pudo cargar paper_equity.csv");
-  const { cols, rows } = parseCsv(await csvR.text());
-  const status = stR.ok ? await stR.json() : {};
-  // 4h track logs one row per 4h candle ("YYYY-MM-DD HH:MM"); keep the last
-  // value of each day so it aligns with the daily series.
-  let alt = null;
-  if (altR.ok) {
-    const byDay = new Map();
-    for (const r of parseCsv(await altR.text()).rows)
-      byDay.set(r.date.slice(0, 10), r.vals[r.vals.length - 1]);
-    if (byDay.size) alt = byDay;
-  }
-  return { cols, rows, status, alt };
+  if (!eq) throw new Error("no se pudo cargar paper_equity.csv");
+  return { eq, eq4, sig, sig4, tr, tr4, st: st || {} };
 }
 
-function tiles(rows, alt) {
-  const total = r => r.vals[r.vals.length - 1];
-  const start = total(rows[0]), now = total(rows[rows.length - 1]);
-  const pnl = now - start, pct = (now / start - 1) * 100;
-  let peak = -Infinity, dd = 0;
-  for (const r of rows) { peak = Math.max(peak, total(r)); dd = Math.min(dd, total(r) / peak - 1); }
-  const days = rows.length;
-  const cls = pnl >= 0 ? "up" : "down";
-  let altTile = "";
-  if (alt) {
-    const av = [...alt.values()], a0 = av[0], a1 = av[av.length - 1];
-    const acls = a1 - a0 >= 0 ? "up" : "down";
-    altTile = `<div class="tile"><div class="label">Equity 4h (experimento)</div>
-      <div class="value">$${fmt(a1)}</div>
-      <div class="delta ${acls}">${fmtS((a1 / a0 - 1) * 100)}% desde el inicio</div></div>`;
-  }
-  document.getElementById("tiles").innerHTML = `
-    <div class="tile"><div class="label">Equity actual</div>
-      <div class="value hero">$${fmt(now)}</div></div>
-    <div class="tile"><div class="label">PnL total</div>
-      <div class="value ${cls}">${fmtS(pnl)}</div>
-      <div class="delta ${cls}">${fmtS(pct)}% desde el inicio</div></div>
-    <div class="tile"><div class="label">Max drawdown</div>
-      <div class="value">${fmt(dd * 100)}%</div></div>
-    <div class="tile"><div class="label">Días de paper</div>
-      <div class="value">${days}</div>
-      <div class="delta">desde ${rows[0].date}</div></div>${altTile}`;
+// ---------------------------------------------------------------------------
+// Freshness: candle open "YYYY-MM-DD" (daily) or "YYYY-MM-DD HH:MM" (4h)
+// ---------------------------------------------------------------------------
+function candleOpenMs(s) {
+  return Date.parse(s.length > 10 ? s.replace(" ", "T") + ":00Z" : s + "T00:00:00Z");
+}
+function freshness(lastCandle, durH, maxLagH) {
+  // A new closed candle should appear every durH hours; the pipeline adds up
+  // to ~maxLagH more. Older than that = the track missed at least one cycle.
+  const closeMs = candleOpenMs(lastCandle) + durH * 36e5;
+  const lagH = (Date.now() - closeMs) / 36e5;
+  const stale = lagH > durH + maxLagH;
+  return { stale, lagH };
+}
+function chip(id, f) {
+  const el = document.getElementById(id);
+  el.className = "chip" + (f.stale ? " warn" : "");
+  el.textContent = f.stale
+    ? `⚠ sin datos desde hace ${Math.round(f.lagH)} h`
+    : "al día";
+}
+function nextCloseTxt(durH) {
+  const now = new Date();
+  const period = durH * 36e5;
+  const ms = period - (now.getTime() % period);
+  const h = Math.floor(ms / 36e5), m = Math.floor(ms % 36e5 / 6e4);
+  return `${h ? h + " h " : ""}${m} min`;
 }
 
-function chart(cols, rows, alt) {
-  const W = 840, H = 300, m = { t: 16, r: 16, b: 28, l: 56 };
+// ---------------------------------------------------------------------------
+// Generic line chart with hover tooltip
+// ---------------------------------------------------------------------------
+function lineChart(chartId, tipId, rows, color, tipRows) {
+  const W = 840, H = 260, m = { t: 16, r: 16, b: 28, l: 56 };
   const iw = W - m.l - m.r, ih = H - m.t - m.b;
-  const total = r => r.vals[r.vals.length - 1];
-  const altAt = r => alt ? alt.get(r.date.slice(0, 10)) : undefined;
-  const ys = rows.map(total).concat(alt ? [...alt.values()] : []);
-  let lo = Math.min(...ys), hi = Math.max(...ys);
-  if (hi - lo < hi * 0.02) { const p = hi * 0.01 || 1; lo -= p; hi += p; }  // flat/1-point guard
+  const val = r => r.vals[r.vals.length - 1];
+  let lo = Math.min(...rows.map(val)), hi = Math.max(...rows.map(val));
+  if (hi - lo < hi * 0.02) { const p = hi * 0.01 || 1; lo -= p; hi += p; }
   const step = niceStep((hi - lo) / 4);
   lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
   const x = i => rows.length === 1 ? m.l + iw / 2 : m.l + i / (rows.length - 1) * iw;
@@ -208,36 +230,23 @@ function chart(cols, rows, alt) {
     const i = Math.round(k * (rows.length - 1) / Math.max(nx - 1, 1));
     g += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${rows[i].date.slice(5)}</text>`;
   }
-  const pts = rows.map((r, i) => `${x(i)},${y(total(r))}`).join(" ");
+  const pts = rows.map((r, i) => `${x(i)},${y(val(r))}`).join(" ");
   const line = rows.length > 1
-    ? `<polygon points="${m.l},${y(lo)} ${pts} ${W - m.r},${y(lo)}" fill="var(--series-1)" opacity="0.1"/>
-       <polyline points="${pts}" fill="none" stroke="var(--series-1)" stroke-width="2"
+    ? `<polygon points="${m.l},${y(lo)} ${pts} ${W - m.r},${y(lo)}" fill="${color}" opacity="0.1"/>
+       <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2"
          stroke-linejoin="round" stroke-linecap="round"/>` : "";
   const li = rows.length - 1;
-  let altLine = "", altEnd = "";
-  if (alt) {
-    document.getElementById("legend").style.display = "flex";
-    const apts = rows.map((r, i) => altAt(r) !== undefined ? `${x(i)},${y(altAt(r))}` : null)
-                     .filter(Boolean);
-    if (apts.length > 1)
-      altLine = `<polyline points="${apts.join(" ")}" fill="none" stroke="var(--series-2)"
-                   stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
-    if (apts.length)
-      altEnd = `<circle cx="${apts[apts.length - 1].split(",")[0]}"
-                  cy="${apts[apts.length - 1].split(",")[1]}" r="4" fill="var(--series-2)"
-                  stroke="var(--surface-1)" stroke-width="2"/>`;
-  }
-  const end = `<circle cx="${x(li)}" cy="${y(total(rows[li]))}" r="4" fill="var(--series-1)"
+  const end = `<circle cx="${x(li)}" cy="${y(val(rows[li]))}" r="4" fill="${color}"
                  stroke="var(--surface-1)" stroke-width="2"/>`;
-  const ch = document.getElementById("chart");
+  const ch = document.getElementById(chartId);
   ch.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">
     ${g}<line x1="${m.l}" y1="${y(lo)}" x2="${W - m.r}" y2="${y(lo)}" stroke="var(--baseline)" stroke-width="1"/>
-    ${line}${altLine}${end}${altEnd}<line id="xh" x1="0" y1="${m.t}" x2="0" y2="${m.t + ih}" stroke="var(--baseline)"
+    ${line}${end}<line id="xh" x1="0" y1="${m.t}" x2="0" y2="${m.t + ih}" stroke="var(--baseline)"
       stroke-width="1" visibility="hidden"/>
-    <circle id="hdot" r="4" fill="var(--series-1)" stroke="var(--surface-1)" stroke-width="2" visibility="hidden"/>
+    <circle id="hdot" r="4" fill="${color}" stroke="var(--surface-1)" stroke-width="2" visibility="hidden"/>
     <rect x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent" id="hit"/></svg>`;
 
-  const svg = ch.firstElementChild, tip = document.getElementById("tooltip");
+  const svg = ch.firstElementChild, tip = document.getElementById(tipId);
   const hit = svg.querySelector("#hit"), xh = svg.querySelector("#xh"), hdot = svg.querySelector("#hdot");
   hit.addEventListener("mousemove", e => {
     const rect = svg.getBoundingClientRect();
@@ -246,11 +255,8 @@ function chart(cols, rows, alt) {
       : Math.max(0, Math.min(rows.length - 1, Math.round((mx - m.l) / iw * (rows.length - 1))));
     const r = rows[i];
     xh.setAttribute("x1", x(i)); xh.setAttribute("x2", x(i)); xh.setAttribute("visibility", "visible");
-    hdot.setAttribute("cx", x(i)); hdot.setAttribute("cy", y(total(r))); hdot.setAttribute("visibility", "visible");
-    const av = altAt(r);
-    tip.innerHTML = `<div class="t-date">${r.date}</div>` + cols.slice(1).map((c, j) =>
-      `<div class="t-row"><span>${c === "total_usdt" ? "Total diario" : c}</span><b>$${fmt(r.vals[j])}</b></div>`).join("")
-      + (av !== undefined ? `<div class="t-row"><span>Total 4h</span><b>$${fmt(av)}</b></div>` : "");
+    hdot.setAttribute("cx", x(i)); hdot.setAttribute("cy", y(val(r))); hdot.setAttribute("visibility", "visible");
+    tip.innerHTML = `<div class="t-date">${r.date}</div>` + tipRows(r);
     tip.style.display = "block";
     const card = ch.parentElement.getBoundingClientRect();
     let tx = e.clientX - card.left + 14;
@@ -270,20 +276,101 @@ function niceStep(raw) {
   return 10 * p;
 }
 
-function positions(cols, rows, status) {
-  const first = rows[0], last = rows[rows.length - 1];
-  const body = cols.slice(1, -1).map((asset, j) => {
-    const sym = Object.keys(status).find(s => s.startsWith(asset + "/")) || asset;
-    const st = status[sym] || {};
-    const long = !!st.in_position;
-    const v0 = first.vals[j], v1 = last.vals[j];
-    const pnl = v1 - v0, cls = pnl >= 0 ? "up" : "down";
+// ---------------------------------------------------------------------------
+// Sections
+// ---------------------------------------------------------------------------
+function tiles(rows, eq4) {
+  const total = r => r.vals[r.vals.length - 1];
+  const start = total(rows[0]), now = total(rows[rows.length - 1]);
+  const pnl = now - start, pct = (now / start - 1) * 100;
+  let peak = -Infinity, dd = 0;
+  for (const r of rows) { peak = Math.max(peak, total(r)); dd = Math.min(dd, total(r) / peak - 1); }
+  const cls = pnl >= 0 ? "up" : "down";
+  let altTile = "";
+  if (eq4 && eq4.rows.length) {
+    const a0 = eq4.rows[0].vals.at(-1), a1 = eq4.rows[eq4.rows.length - 1].vals.at(-1);
+    const acls = a1 - a0 >= 0 ? "up" : "down";
+    altTile = `<div class="tile"><div class="label">Equity 4h (experimento)</div>
+      <div class="value">$${fmt(a1)}</div>
+      <div class="delta ${acls}">${fmtS((a1 / a0 - 1) * 100)}% desde el inicio</div></div>`;
+  }
+  document.getElementById("tiles").innerHTML = `
+    <div class="tile"><div class="label">Equity actual (diario)</div>
+      <div class="value hero">$${fmt(now)}</div></div>
+    <div class="tile"><div class="label">PnL total</div>
+      <div class="value ${cls}">${fmtS(pnl)}</div>
+      <div class="delta ${cls}">${fmtS(pct)}% desde el inicio</div></div>
+    <div class="tile"><div class="label">Max drawdown</div>
+      <div class="value">${fmt(dd * 100)}%</div></div>
+    <div class="tile"><div class="label">Días de paper</div>
+      <div class="value">${rows.length}</div>
+      <div class="delta">desde ${rows[0].date}</div></div>${altTile}`;
+}
+
+function signalsTable(elId, sig, st, eq) {
+  const el = document.getElementById(elId);
+  if (!sig) {
+    // fallback for the transition: old status.json only knows the position
+    const names = Object.keys(st);
+    if (!names.length) { el.innerHTML = `<tbody><tr><td class="empty">Sin datos de señal todavía (a la espera del primer ciclo con la versión nueva del bot).</td></tr></tbody>`; return; }
+    const body = names.map(sym => {
+      const long = !!st[sym].in_position;
+      return `<tr><td>${sym.split("/")[0]}</td>
+        <td><span class="dot" style="background:${long ? "var(--status-good)" : "var(--baseline)"}"></span>${long ? "LONG" : "OUT (cash)"}</td>
+        <td colspan="3" class="empty">contexto de señal disponible tras el próximo ciclo del bot</td></tr>`;
+    }).join("");
+    el.innerHTML = `<thead><tr><th>Activo</th><th>Señal</th><th></th><th></th><th></th></tr></thead><tbody>${body}</tbody>`;
+    return;
+  }
+  const first = eq ? eq.rows[0] : null, last = eq ? eq.rows[eq.rows.length - 1] : null;
+  const assets = eq ? eq.cols.slice(1, -1) : Object.keys(sig.symbols).map(s => s.split("/")[0]);
+  const th = parseFloat(sig.rule.match(/> ([\d.]+)$/)?.[1] ?? "55");
+  const body = assets.map((asset, j) => {
+    const sym = Object.keys(sig.symbols).find(s => s.startsWith(asset + "/"));
+    const s = sym ? sig.symbols[sym] : null;
+    if (!s) return "";
+    const long = s.signal === "LONG";
+    const emaCls = s.ema_dist_pct >= 0 ? "up" : "down";
+    const rsiCls = s.rsi > th ? "up" : "down";
+    let pnlTd = "<td>—</td><td>—</td>";
+    if (first && last) {
+      const v0 = first.vals[j], v1 = last.vals[j];
+      const cls = v1 - v0 >= 0 ? "up" : "down";
+      pnlTd = `<td>$${fmt(v1)}</td><td class="${cls}">${fmtS((v1 / v0 - 1) * 100)}%</td>`;
+    }
     return `<tr><td>${asset}</td>
       <td><span class="dot" style="background:${long ? "var(--status-good)" : "var(--baseline)"}"></span>${long ? "LONG" : "OUT (cash)"}</td>
-      <td>$${fmt(v1)}</td><td class="${cls}">${fmtS(pnl)} (${fmtS((v1 / v0 - 1) * 100)}%)</td></tr>`;
+      <td>$${fmtP(s.close)}</td>
+      <td class="${emaCls}">${fmtS(s.ema_dist_pct)}% <span style="color:var(--text-muted)">(EMA $${fmtP(s.ema)})</span></td>
+      <td class="${rsiCls}">${s.rsi} <span style="color:var(--text-muted)">(necesita &gt;${th})</span></td>
+      ${pnlTd}</tr>`;
   }).join("");
-  document.getElementById("positions").innerHTML =
-    `<thead><tr><th>Activo</th><th>Señal</th><th>Valor</th><th>PnL</th></tr></thead><tbody>${body}</tbody>`;
+  el.innerHTML = `<thead><tr><th>Activo</th><th>Señal</th><th>Precio</th><th>vs EMA</th><th>RSI</th>
+    <th>Valor</th><th>PnL</th></tr></thead><tbody>${body}</tbody>`;
+}
+
+function tradesTable(tr, tr4) {
+  const all = [];
+  const collect = (t, track) => {
+    if (!t) return;
+    for (const r of t.rows) {
+      const [ts, candle, symbol, side, price, amount, value] = r.raw;
+      all.push({ ts, track, symbol, side, price: +price, amount: +amount, value: +value });
+    }
+  };
+  collect(tr, "1D"); collect(tr4, "4h");
+  all.sort((a, b) => b.ts.localeCompare(a.ts));
+  const el = document.getElementById("trades");
+  if (!all.length) {
+    el.innerHTML = `<tbody><tr><td class="empty">Sin operaciones registradas todavía. El registro empieza a partir de esta versión; la señal diaria está en OUT desde el arranque, así que no ha habido nada que ejecutar.</td></tr></tbody>`;
+    return;
+  }
+  const body = all.map(t => `<tr>
+    <td>${t.ts} UTC</td><td>${t.track}</td><td>${t.symbol.split("/")[0]}</td>
+    <td class="side-${t.side.toLowerCase()}">${t.side === "BUY" ? "COMPRA" : "VENTA"}</td>
+    <td>$${fmtP(t.price)}</td><td>${fmtP(t.amount, 6)}</td><td>$${fmt(t.value)}</td></tr>`).join("");
+  el.innerHTML = `<thead><tr><th>Fecha</th><th>Track</th><th>Activo</th><th>Acción</th>
+    <th>Precio</th><th>Cantidad</th><th>USDT</th></tr></thead><tbody>${body}</tbody>`;
 }
 
 function datatable(cols, rows) {
@@ -293,13 +380,42 @@ function datatable(cols, rows) {
   document.getElementById("datatable").innerHTML = `<thead>${head}</thead><tbody>${body}</tbody>`;
 }
 
-load().then(({ cols, rows, status, alt }) => {
+// ---------------------------------------------------------------------------
+load().then(({ eq, eq4, sig, sig4, tr, tr4, st }) => {
+  const mode = sig?.mode || "dry-run";
   document.getElementById("subtitle").textContent =
-    `BTC + ETH + SOL · dry-run · última vela: ${rows[rows.length - 1].date}`;
-  tiles(rows, alt);
-  chart(cols, rows, alt);
-  positions(cols, rows, status);
-  datatable(cols, rows);
+    `BTC + ETH + SOL · ${mode} · última vela diaria: ${eq.rows[eq.rows.length - 1].date}`;
+
+  tiles(eq.rows, eq4);
+
+  // daily track
+  const f1 = freshness(eq.rows[eq.rows.length - 1].date, 24, 26);
+  chip("chip-1d", f1);
+  document.getElementById("meta-1d").textContent =
+    `La vela diaria en curso cierra en ${nextCloseTxt(24)} (00:00 UTC); la curva se actualiza ~5 min después.`;
+  lineChart("chart-1d", "tip-1d", eq.rows, "var(--series-1)", r =>
+    eq.cols.slice(1).map((c, j) =>
+      `<div class="t-row"><span>${c === "total_usdt" ? "Total" : c}</span><b>$${fmt(r.vals[j])}</b></div>`).join(""));
+  if (sig?.rule) document.getElementById("rule-1d").textContent = sig.rule;
+  signalsTable("signals-1d", sig, st, eq);
+
+  tradesTable(tr, tr4);
+
+  // 4h track
+  if (eq4 && eq4.rows.length) {
+    const f4 = freshness(eq4.rows[eq4.rows.length - 1].date, 4, 6);
+    chip("chip-4h", f4);
+    document.getElementById("meta-4h").textContent +=
+      ` La vela 4h en curso cierra en ${nextCloseTxt(4)}.`;
+    lineChart("chart-4h", "tip-4h", eq4.rows, "var(--series-2)", r =>
+      eq4.cols.slice(1).map((c, j) =>
+        `<div class="t-row"><span>${c === "total_usdt" ? "Total" : c}</span><b>$${fmt(r.vals[j])}</b></div>`).join(""));
+    signalsTable("signals-4h", sig4, {}, eq4);
+  } else {
+    document.getElementById("chart-4h").innerHTML = `<p class="empty">Sin datos del track 4h todavía.</p>`;
+  }
+
+  datatable(eq.cols, eq.rows);
 }).catch(e => {
   document.getElementById("subtitle").innerHTML = `<span class="err">Error cargando datos: ${e.message}</span>`;
 });

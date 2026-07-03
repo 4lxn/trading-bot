@@ -24,7 +24,7 @@ fi
     # 4 hours; previously it only rode along on the once-a-day daily publish,
     # so the dashboard lagged it by up to 24h).
     changed=0
-    for f in paper_equity.csv paper_equity_4h.csv; do
+    for f in paper_equity.csv paper_equity_4h.csv trades.csv trades_4h.csv; do
         if [ -f "state/$f" ] && ! cmp -s "state/$f" "docs/$f"; then
             cp "state/$f" "docs/$f"
             changed=1
@@ -32,6 +32,10 @@ fi
     done
     if [ "$changed" = 1 ]; then
         [ -f state/paper_state.json ] && cp state/paper_state.json docs/status.json
+        # signal context (why in/out) rides along on every publish
+        for f in signals.json signals_4h.json; do
+            [ -f "state/$f" ] && cp "state/$f" "docs/$f"
+        done
         msg="paper: equity update"
         [ -f state/paper_equity.csv ] && msg="paper: equity through $(tail -1 state/paper_equity.csv | cut -d, -f1)"
         [ -f state/paper_equity_4h.csv ] && msg="$msg, 4h $(tail -1 state/paper_equity_4h.csv | cut -d, -f1)"

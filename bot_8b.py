@@ -70,6 +70,8 @@ def config() -> dict:
         "timeframe": timeframe,
         "paper_state_file": os.path.join(STATE_DIR, f"paper_state{sfx}.json"),
         "paper_equity_file": os.path.join(STATE_DIR, f"paper_equity{sfx}.csv"),
+        "trades_file": os.path.join(STATE_DIR, f"trades{sfx}.csv"),
+        "signals_file": os.path.join(STATE_DIR, f"signals{sfx}.json"),
         "mode": os.environ.get("MODE", "dry-run").lower(),
         "api_key": os.environ.get("BINANCE_API_KEY", ""),
         "api_secret": os.environ.get("BINANCE_API_SECRET", ""),
@@ -211,6 +213,36 @@ def log_paper_equity(cfg: dict, state: dict, prices: dict, candle) -> None:
     log(f"[dry-run] paper equity at {candle} close: {total:,.2f} USDT")
 
 
+def log_trade(cfg: dict, symbol: str, side: str, price: float, amount: float,
+              value: float, candle) -> None:
+    """Append one row per executed action so the dashboard can show the
+    full trade history (state/trades{sfx}.csv, published to docs/)."""
+    path = cfg["trades_file"]
+    os.makedirs(STATE_DIR, exist_ok=True)
+    is_new = not os.path.exists(path)
+    with open(path, "a") as f:
+        if is_new:
+            f.write("ts_utc,candle,symbol,side,price,amount,value_usdt,mode\n")
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        f.write(f"{ts},{candle},{symbol},{side},{price:.8g},{amount:.8g},"
+                f"{value:.2f},{cfg['mode']}\n")
+
+
+def save_signals(cfg: dict, snapshot: dict) -> None:
+    """Per-symbol signal context (close vs EMA, RSI vs threshold, position)
+    so the dashboard can show WHY the bot is in or out, not just the equity."""
+    os.makedirs(STATE_DIR, exist_ok=True)
+    with open(cfg["signals_file"], "w") as f:
+        json.dump({
+            "generated_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            "mode": cfg["mode"],
+            "timeframe": cfg["timeframe"],
+            "rule": f"close > EMA({cfg['ema_len']}) and RSI({cfg['rsi_len']}) "
+                    f"> {cfg['rsi_threshold']:g}",
+            "symbols": snapshot,
+        }, f, indent=2)
+
+
 def read_position(exchange: ccxt.binance, symbol: str, price: float) -> tuple[bool, float, float]:
     """Returns (in_position, base_amount, free_usdt) from the exchange."""
     base, quote = symbol.split("/")
@@ -224,7 +256,7 @@ def read_position(exchange: ccxt.binance, symbol: str, price: float) -> tuple[bo
 # One cycle
 # ---------------------------------------------------------------------------
 
-def paper_symbol_cycle(cfg: dict, state: dict, symbol: str, is_long: bool, info: dict) -> None:
+def paper_symbol_cycle(cfg: dict, state: dict, symbol: str, is_long: bool, info: dict) -> bool:
     bucket = state[symbol]
     base = symbol.split("/")[0]
     # Same friction the backtest charges (fee + slippage per side), so the
@@ -235,53 +267,65 @@ def paper_symbol_cycle(cfg: dict, state: dict, symbol: str, is_long: bool, info:
         bucket.update(in_position=True, base=spend * friction / info["close"],
                       usdt=bucket["usdt"] - spend)
         save_paper_state(cfg, state)
+        log_trade(cfg, symbol, "BUY", info["close"], bucket["base"], spend, info["candle"])
         msg = (f"[dry-run] BUY signal: paper-bought {bucket['base']:.6f} {base} "
                f"at ~{info['close']:,.2f} ({spend:.2f} USDT)")
         log(msg)
         telegram(cfg, f"🟢 {msg}")
     elif not is_long and bucket["in_position"]:
-        proceeds = bucket["base"] * info["close"] * friction
-        msg = (f"[dry-run] SELL signal: paper-sold {bucket['base']:.6f} {base} "
+        sold = bucket["base"]
+        proceeds = sold * info["close"] * friction
+        msg = (f"[dry-run] SELL signal: paper-sold {sold:.6f} {base} "
                f"at ~{info['close']:,.2f} ({proceeds:.2f} USDT)")
         bucket.update(in_position=False, base=0.0, usdt=bucket["usdt"] + proceeds)
         save_paper_state(cfg, state)
+        log_trade(cfg, symbol, "SELL", info["close"], sold, proceeds, info["candle"])
         log(msg)
         telegram(cfg, f"🔴 {msg}")
     else:
         log(f"[dry-run] {symbol} signal {'LONG' if is_long else 'OUT'}, "
             f"paper position already matches — nothing to do")
+    return bucket["in_position"]
 
 
 def real_symbol_cycle(exchange: ccxt.binance, cfg: dict, symbol: str,
-                      is_long: bool, info: dict) -> None:
+                      is_long: bool, info: dict) -> bool:
     """testnet / live: read the REAL position, act only on mismatch (idempotent)."""
     in_position, base_amount, free_usdt = read_position(exchange, symbol, info["close"])
     if is_long and not in_position:
         spend = min(free_usdt * cfg["order_frac"], cfg["max_usdt"])
         if spend < DUST_USDT:
             log(f"{symbol} BUY signal but only {free_usdt:.2f} USDT free — skipping")
-            return
+            return in_position
         amount = exchange.amount_to_precision(symbol, spend / info["close"])
         order = exchange.create_market_buy_order(symbol, float(amount))
-        msg = (f"[{cfg['mode']}] BUY executed: {order.get('filled', amount)} "
+        filled = float(order.get("filled") or amount)
+        log_trade(cfg, symbol, "BUY", info["close"], filled, spend, info["candle"])
+        msg = (f"[{cfg['mode']}] BUY executed: {filled} "
                f"{symbol.split('/')[0]} (~{spend:.2f} USDT)")
         log(msg)
         telegram(cfg, f"🟢 {msg}")
+        return True
     elif not is_long and in_position:
         amount = exchange.amount_to_precision(symbol, base_amount)
         order = exchange.create_market_sell_order(symbol, float(amount))
-        msg = (f"[{cfg['mode']}] SELL executed: {order.get('filled', amount)} "
+        filled = float(order.get("filled") or amount)
+        log_trade(cfg, symbol, "SELL", info["close"], filled,
+                  filled * info["close"], info["candle"])
+        msg = (f"[{cfg['mode']}] SELL executed: {filled} "
                f"{symbol.split('/')[0]} at ~{info['close']:,.2f}")
         log(msg)
         telegram(cfg, f"🔴 {msg}")
+        return False
     else:
         log(f"{symbol} signal {'LONG' if is_long else 'OUT'}, position already matches — nothing to do")
+    return in_position
 
 
 def run_cycle(cfg: dict) -> None:
     exchange = make_exchange(cfg)
     state = paper_state(cfg) if cfg["mode"] == "dry-run" else None
-    prices, last_candle = {}, None
+    prices, last_candle, snapshot = {}, None, {}
     for symbol in cfg["symbols"]:
         is_long, info = compute_signal(exchange, cfg, symbol)
         prices[symbol], last_candle = info["close"], info["candle"]
@@ -289,9 +333,19 @@ def run_cycle(cfg: dict) -> None:
             f"close {info['close']:,.2f}, EMA{cfg['ema_len']} {info['ema']:,.2f}, "
             f"RSI {info['rsi']:.1f} -> signal {'LONG' if is_long else 'OUT'}")
         if cfg["mode"] == "dry-run":
-            paper_symbol_cycle(cfg, state, symbol, is_long, info)
+            in_position = paper_symbol_cycle(cfg, state, symbol, is_long, info)
         else:
-            real_symbol_cycle(exchange, cfg, symbol, is_long, info)
+            in_position = real_symbol_cycle(exchange, cfg, symbol, is_long, info)
+        snapshot[symbol] = {
+            "signal": "LONG" if is_long else "OUT",
+            "in_position": in_position,
+            "candle": str(info["candle"]),
+            "close": round(info["close"], 8),
+            "ema": round(info["ema"], 8),
+            "rsi": round(info["rsi"], 1),
+            "ema_dist_pct": round((info["close"] / info["ema"] - 1) * 100, 2),
+        }
+    save_signals(cfg, snapshot)
     if cfg["mode"] == "dry-run":
         save_paper_state(cfg, state)
         log_paper_equity(cfg, state, prices, last_candle)
