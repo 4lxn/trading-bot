@@ -20,13 +20,23 @@ fi
 # sync with the remote every cycle (self-heals a previously failed push).
 # Failures here must not affect the bot run — log and move on.
 {
-    if [ -f state/paper_equity.csv ] && ! cmp -s state/paper_equity.csv docs/paper_equity.csv; then
-        cp state/paper_equity.csv docs/paper_equity.csv
-        cp state/paper_state.json docs/status.json
-        # 4h curiosity track rides along on the daily publish, if it exists
-        [ -f state/paper_equity_4h.csv ] && cp state/paper_equity_4h.csv docs/paper_equity_4h.csv
+    # Publish whenever EITHER track's CSV changed (the 4h one updates every
+    # 4 hours; previously it only rode along on the once-a-day daily publish,
+    # so the dashboard lagged it by up to 24h).
+    changed=0
+    for f in paper_equity.csv paper_equity_4h.csv; do
+        if [ -f "state/$f" ] && ! cmp -s "state/$f" "docs/$f"; then
+            cp "state/$f" "docs/$f"
+            changed=1
+        fi
+    done
+    if [ "$changed" = 1 ]; then
+        [ -f state/paper_state.json ] && cp state/paper_state.json docs/status.json
+        msg="paper: equity update"
+        [ -f state/paper_equity.csv ] && msg="paper: equity through $(tail -1 state/paper_equity.csv | cut -d, -f1)"
+        [ -f state/paper_equity_4h.csv ] && msg="$msg, 4h $(tail -1 state/paper_equity_4h.csv | cut -d, -f1)"
         git add docs/
-        git commit -q -m "paper: equity through $(tail -1 state/paper_equity.csv | cut -d, -f1)"
+        git commit -q -m "$msg"
     fi
     git pull --rebase -q && git push -q
 } >> logs/bot.log 2>&1 || echo "[publish] git sync failed (will retry next cycle)" >> logs/bot.log
