@@ -68,6 +68,7 @@ Correct.
 | `run.sh` + `launchd/com.trading8b.bot.plist` | 24/7 deployment on the Mac mini |
 | `paper_trading_8b.xlsx` | Paper-trading log with automatic P&L/drawdown |
 | `BACKTEST_RESULTS.md`, `OPTIMIZATION.md`, `FULL_RANGE_RESULTS.md` | Validation records |
+| `SWEEP_RESULTS.md` | 2026-07-01 double-check: RSI length, 4h (rejected), tickers → **BTC+ETH+SOL portfolio** |
 
 ## Quickstart
 
@@ -94,9 +95,13 @@ permission**, starting with a small `MAX_USDT`.
    conservative? The bot exposes `ORDER_FRAC` + `MAX_USDT` — define your risk.
 2. **Spot vs futures:** currently spot, long-only, **no liquidation risk**.
    1x futures could be considered but nothing gets leveraged without re-validating.
-3. **Portfolio or ensemble?** Run 8b across several liquid coins, or combine
-   8b + MACD + Donchian. The Mac running 24/7 makes this free to operate.
-4. **4h timeframe?** Not validated — would need 4h data tested with the same rigor.
+3. **Portfolio or ensemble?** ✅ ANSWERED (2026-07-01, `SWEEP_RESULTS.md`):
+   8b transfers to ETH and SOL with zero re-fitting; the BTC+ETH+SOL
+   equal-weight portfolio halves the drawdown at equal-or-better Sharpe.
+   XRP does not work. Ensemble (8b + MACD + Donchian) still open.
+4. **4h timeframe?** ✅ ANSWERED (2026-07-01, `SWEEP_RESULTS.md`): tested
+   with the same rigor — every 4h config loses to daily with 2–6× the
+   trades. Rejected; daily stays.
 5. **Execution frequency:** hourly (idempotent, robust to sleep — the current
    default) vs exactly at the 00:00 UTC close (less slippage).
 6. **Operational robustness:** restarts, exchange outages, double runs — the

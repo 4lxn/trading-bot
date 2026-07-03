@@ -21,3 +21,6 @@ venv/
 
 # macOS
 .DS_Store
+
+# Local launchd plist with machine paths
+launchd/*.ready.plist

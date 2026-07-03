@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Estrategia 8b — paper trading</title>
+<style>
+  :root {
+    --surface-1: #fcfcfb;
+    --page: #f9f9f7;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --grid: #e1e0d9;
+    --baseline: #c3c2b7;
+    --border: rgba(11,11,11,0.10);
+    --series-1: #2a78d6;
+    --series-2: #1baf7a;
+    --delta-up: #006300;
+    --delta-down: #d03b3b;
+    --status-good: #0ca30c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface-1: #1a1a19;
+      --page: #0d0d0d;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #898781;
+      --grid: #2c2c2a;
+      --baseline: #383835;
+      --border: rgba(255,255,255,0.10);
+      --series-1: #3987e5;
+      --series-2: #199e70;
+      --delta-up: #0ca30c;
+      --delta-down: #d03b3b;
+      --status-good: #0ca30c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px;
+    background: var(--page); color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 20px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .tile {
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 16px;
+  }
+  .tile .label { font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; }
+  .tile .value { font-size: 26px; font-weight: 600; }
+  .tile .value.hero { font-size: 34px; }
+  .tile .delta { font-size: 13px; margin-top: 2px; }
+  .up   { color: var(--delta-up); }
+  .down { color: var(--delta-down); }
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px; margin-bottom: 16px; position: relative;
+  }
+  .card h2 { font-size: 14px; font-weight: 600; margin: 0 0 12px; }
+  svg text { font-family: inherit; font-size: 11px; fill: var(--text-muted); font-variant-numeric: tabular-nums; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; font-size: 12px; color: var(--text-secondary); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--grid); }
+  td { padding: 8px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: none; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: baseline; }
+  .tooltip {
+    position: absolute; pointer-events: none; display: none;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    white-space: nowrap; z-index: 2;
+  }
+  .tooltip .t-date { color: var(--text-secondary); margin-bottom: 4px; }
+  .tooltip .t-row { display: flex; justify-content: space-between; gap: 16px; font-variant-numeric: tabular-nums; }
+  .legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
+  .legend .key { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 6px; border-radius: 1px; }
+  details { margin-bottom: 16px; }
+  summary { cursor: pointer; font-size: 13px; color: var(--text-secondary); }
+  details table { margin-top: 8px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; }
+  .foot { color: var(--text-muted); font-size: 12px; line-height: 1.5; }
+  .err { color: var(--delta-down); font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Estrategia 8b — paper trading</h1>
+  <p class="sub" id="subtitle">BTC + ETH + SOL · dry-run · cargando…</p>
+
+  <div class="tiles" id="tiles"></div>
+
+  <div class="card">
+    <h2>Curva de equity (USDT)</h2>
+    <div class="legend" id="legend" style="display:none">
+      <span><span class="key" style="background:var(--series-1)"></span>Diario (8b)</span>
+      <span><span class="key" style="background:var(--series-2)"></span>4h (experimento)</span>
+    </div>
+    <div id="chart"></div>
+    <div class="tooltip" id="tooltip"></div>
+  </div>
+
+  <div class="card">
+    <h2>Posiciones</h2>
+    <table id="positions"><tbody></tbody></table>
+  </div>
+
+  <details>
+    <summary>Ver datos (tabla)</summary>
+    <table id="datatable"></table>
+  </details>
+
+  <p class="foot">
+    Modo dry-run: posiciones de papel con fricción simulada de 0,15% por lado
+    (la misma del backtest). La señal se evalúa sobre la vela diaria cerrada:
+    long mientras cierre &gt; EMA(200) y RSI(14) &gt; 55; si no, cash.
+    Se actualiza una vez al día tras el cierre de 00:00 UTC.
+    La serie «4h (experimento)» es un track paralelo por curiosidad
+    (EMA 600 barras / RSI 84 &gt; 50 en velas de 4h, capital de papel propio);
+    el backtest 2017–2026 ya mostró que 4h rinde peor que diario.
+  </p>
+</div>
+
+<script>
+const fmt  = n => n.toLocaleString("es", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtS = n => (n >= 0 ? "+" : "−") + fmt(Math.abs(n));
+
+function parseCsv(text) {
+  const lines = text.trim().split("\n");
+  const cols = lines[0].split(",");                       // candle,BTC,ETH,SOL,total_usdt
+  const rows = lines.slice(1).map(l => {
+    const p = l.split(",");
+    return { date: p[0], vals: p.slice(1).map(Number) };  // vals aligned with cols[1..]
+  });
+  return { cols, rows };
+}
+
+async function load() {
+  const [csvR, stR, altR] = await Promise.all([
+    fetch("paper_equity.csv"), fetch("status.json"), fetch("paper_equity_4h.csv"),
+  ]);
+  if (!csvR.ok) throw new Error("no se pudo cargar paper_equity.csv");
+  const { cols, rows } = parseCsv(await csvR.text());
+  const status = stR.ok ? await stR.json() : {};
+  // 4h track logs one row per 4h candle ("YYYY-MM-DD HH:MM"); keep the last
+  // value of each day so it aligns with the daily series.
+  let alt = null;
+  if (altR.ok) {
+    const byDay = new Map();
+    for (const r of parseCsv(await altR.text()).rows)
+      byDay.set(r.date.slice(0, 10), r.vals[r.vals.length - 1]);
+    if (byDay.size) alt = byDay;
+  }
+  return { cols, rows, status, alt };
+}
+
+function tiles(rows, alt) {
+  const total = r => r.vals[r.vals.length - 1];
+  const start = total(rows[0]), now = total(rows[rows.length - 1]);
+  const pnl = now - start, pct = (now / start - 1) * 100;
+  let peak = -Infinity, dd = 0;
+  for (const r of rows) { peak = Math.max(peak, total(r)); dd = Math.min(dd, total(r) / peak - 1); }
+  const days = rows.length;
+  const cls = pnl >= 0 ? "up" : "down";
+  let altTile = "";
+  if (alt) {
+    const av = [...alt.values()], a0 = av[0], a1 = av[av.length - 1];
+    const acls = a1 - a0 >= 0 ? "up" : "down";
+    altTile = `<div class="tile"><div class="label">Equity 4h (experimento)</div>
+      <div class="value">$${fmt(a1)}</div>
+      <div class="delta ${acls}">${fmtS((a1 / a0 - 1) * 100)}% desde el inicio</div></div>`;
+  }
+  document.getElementById("tiles").innerHTML = `
+    <div class="tile"><div class="label">Equity actual</div>
+      <div class="value hero">$${fmt(now)}</div></div>
+    <div class="tile"><div class="label">PnL total</div>
+      <div class="value ${cls}">${fmtS(pnl)}</div>
+      <div class="delta ${cls}">${fmtS(pct)}% desde el inicio</div></div>
+    <div class="tile"><div class="label">Max drawdown</div>
+      <div class="value">${fmt(dd * 100)}%</div></div>
+    <div class="tile"><div class="label">Días de paper</div>
+      <div class="value">${days}</div>
+      <div class="delta">desde ${rows[0].date}</div></div>${altTile}`;
+}
+
+function chart(cols, rows, alt) {
+  const W = 840, H = 300, m = { t: 16, r: 16, b: 28, l: 56 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const total = r => r.vals[r.vals.length - 1];
+  const altAt = r => alt ? alt.get(r.date.slice(0, 10)) : undefined;
+  const ys = rows.map(total).concat(alt ? [...alt.values()] : []);
+  let lo = Math.min(...ys), hi = Math.max(...ys);
+  if (hi - lo < hi * 0.02) { const p = hi * 0.01 || 1; lo -= p; hi += p; }  // flat/1-point guard
+  const step = niceStep((hi - lo) / 4);
+  lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
+  const x = i => rows.length === 1 ? m.l + iw / 2 : m.l + i / (rows.length - 1) * iw;
+  const y = v => m.t + (1 - (v - lo) / (hi - lo)) * ih;
+
+  let g = "";
+  for (let v = lo; v <= hi + 1e-9; v += step) {
+    g += `<line x1="${m.l}" y1="${y(v)}" x2="${W - m.r}" y2="${y(v)}" stroke="var(--grid)" stroke-width="1"/>`
+       + `<text x="${m.l - 8}" y="${y(v) + 4}" text-anchor="end">${v.toLocaleString("es")}</text>`;
+  }
+  const nx = Math.min(rows.length, 6);
+  for (let k = 0; k < nx; k++) {
+    const i = Math.round(k * (rows.length - 1) / Math.max(nx - 1, 1));
+    g += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${rows[i].date.slice(5)}</text>`;
+  }
+  const pts = rows.map((r, i) => `${x(i)},${y(total(r))}`).join(" ");
+  const line = rows.length > 1
+    ? `<polygon points="${m.l},${y(lo)} ${pts} ${W - m.r},${y(lo)}" fill="var(--series-1)" opacity="0.1"/>
+       <polyline points="${pts}" fill="none" stroke="var(--series-1)" stroke-width="2"
+         stroke-linejoin="round" stroke-linecap="round"/>` : "";
+  const li = rows.length - 1;
+  let altLine = "", altEnd = "";
+  if (alt) {
+    document.getElementById("legend").style.display = "flex";
+    const apts = rows.map((r, i) => altAt(r) !== undefined ? `${x(i)},${y(altAt(r))}` : null)
+                     .filter(Boolean);
+    if (apts.length > 1)
+      altLine = `<polyline points="${apts.join(" ")}" fill="none" stroke="var(--series-2)"
+                   stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    if (apts.length)
+      altEnd = `<circle cx="${apts[apts.length - 1].split(",")[0]}"
+                  cy="${apts[apts.length - 1].split(",")[1]}" r="4" fill="var(--series-2)"
+                  stroke="var(--surface-1)" stroke-width="2"/>`;
+  }
+  const end = `<circle cx="${x(li)}" cy="${y(total(rows[li]))}" r="4" fill="var(--series-1)"
+                 stroke="var(--surface-1)" stroke-width="2"/>`;
+  const ch = document.getElementById("chart");
+  ch.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">
+    ${g}<line x1="${m.l}" y1="${y(lo)}" x2="${W - m.r}" y2="${y(lo)}" stroke="var(--baseline)" stroke-width="1"/>
+    ${line}${altLine}${end}${altEnd}<line id="xh" x1="0" y1="${m.t}" x2="0" y2="${m.t + ih}" stroke="var(--baseline)"
+      stroke-width="1" visibility="hidden"/>
+    <circle id="hdot" r="4" fill="var(--series-1)" stroke="var(--surface-1)" stroke-width="2" visibility="hidden"/>
+    <rect x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent" id="hit"/></svg>`;
+
+  const svg = ch.firstElementChild, tip = document.getElementById("tooltip");
+  const hit = svg.querySelector("#hit"), xh = svg.querySelector("#xh"), hdot = svg.querySelector("#hdot");
+  hit.addEventListener("mousemove", e => {
+    const rect = svg.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) * W / rect.width;
+    const i = rows.length === 1 ? 0
+      : Math.max(0, Math.min(rows.length - 1, Math.round((mx - m.l) / iw * (rows.length - 1))));
+    const r = rows[i];
+    xh.setAttribute("x1", x(i)); xh.setAttribute("x2", x(i)); xh.setAttribute("visibility", "visible");
+    hdot.setAttribute("cx", x(i)); hdot.setAttribute("cy", y(total(r))); hdot.setAttribute("visibility", "visible");
+    const av = altAt(r);
+    tip.innerHTML = `<div class="t-date">${r.date}</div>` + cols.slice(1).map((c, j) =>
+      `<div class="t-row"><span>${c === "total_usdt" ? "Total diario" : c}</span><b>$${fmt(r.vals[j])}</b></div>`).join("")
+      + (av !== undefined ? `<div class="t-row"><span>Total 4h</span><b>$${fmt(av)}</b></div>` : "");
+    tip.style.display = "block";
+    const card = ch.parentElement.getBoundingClientRect();
+    let tx = e.clientX - card.left + 14;
+    if (tx + tip.offsetWidth > card.width - 8) tx = e.clientX - card.left - tip.offsetWidth - 14;
+    tip.style.left = tx + "px";
+    tip.style.top = (e.clientY - card.top - 10) + "px";
+  });
+  hit.addEventListener("mouseleave", () => {
+    tip.style.display = "none";
+    xh.setAttribute("visibility", "hidden"); hdot.setAttribute("visibility", "hidden");
+  });
+}
+
+function niceStep(raw) {
+  const p = Math.pow(10, Math.floor(Math.log10(raw || 1)));
+  for (const mlt of [1, 2, 5, 10]) if (raw <= mlt * p) return mlt * p;
+  return 10 * p;
+}
+
+function positions(cols, rows, status) {
+  const first = rows[0], last = rows[rows.length - 1];
+  const body = cols.slice(1, -1).map((asset, j) => {
+    const sym = Object.keys(status).find(s => s.startsWith(asset + "/")) || asset;
+    const st = status[sym] || {};
+    const long = !!st.in_position;
+    const v0 = first.vals[j], v1 = last.vals[j];
+    const pnl = v1 - v0, cls = pnl >= 0 ? "up" : "down";
+    return `<tr><td>${asset}</td>
+      <td><span class="dot" style="background:${long ? "var(--status-good)" : "var(--baseline)"}"></span>${long ? "LONG" : "OUT (cash)"}</td>
+      <td>$${fmt(v1)}</td><td class="${cls}">${fmtS(pnl)} (${fmtS((v1 / v0 - 1) * 100)}%)</td></tr>`;
+  }).join("");
+  document.getElementById("positions").innerHTML =
+    `<thead><tr><th>Activo</th><th>Señal</th><th>Valor</th><th>PnL</th></tr></thead><tbody>${body}</tbody>`;
+}
+
+function datatable(cols, rows) {
+  const head = "<tr>" + cols.map(c => `<th>${c === "total_usdt" ? "Total" : c === "candle" ? "Fecha" : c}</th>`).join("") + "</tr>";
+  const body = rows.slice().reverse().map(r =>
+    `<tr><td>${r.date}</td>` + r.vals.map(v => `<td>$${fmt(v)}</td>`).join("") + "</tr>").join("");
+  document.getElementById("datatable").innerHTML = `<thead>${head}</thead><tbody>${body}</tbody>`;
+}
+
+load().then(({ cols, rows, status, alt }) => {
+  document.getElementById("subtitle").textContent =
+    `BTC + ETH + SOL · dry-run · última vela: ${rows[rows.length - 1].date}`;
+  tiles(rows, alt);
+  chart(cols, rows, alt);
+  positions(cols, rows, status);
+  datatable(cols, rows);
+}).catch(e => {
+  document.getElementById("subtitle").innerHTML = `<span class="err">Error cargando datos: ${e.message}</span>`;
+});
+</script>
+</body>
+</html>
