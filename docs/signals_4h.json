@@ -1,5 +1,5 @@
 {
-  "generated_utc": "2026-07-03 23:07:12",
+  "generated_utc": "2026-07-04 00:07:08",
   "mode": "dry-run",
   "timeframe": "4h",
   "rule": "close > EMA(600) and RSI(84) > 50",
@@ -7,29 +7,29 @@
     "BTC/USDT": {
       "signal": "OUT",
       "in_position": false,
-      "candle": "2026-07-03 16:00",
-      "close": 62210.0,
-      "ema": 69934.87227059,
-      "rsi": 48.4,
-      "ema_dist_pct": -11.05
+      "candle": "2026-07-03 20:00",
+      "close": 62583.26,
+      "ema": 69910.21925559,
+      "rsi": 48.9,
+      "ema_dist_pct": -10.48
     },
     "ETH/USDT": {
       "signal": "OUT",
       "in_position": false,
-      "candle": "2026-07-03 16:00",
-      "close": 1745.38,
-      "ema": 1988.22570912,
-      "rsi": 51.5,
-      "ema_dist_pct": -12.21
+      "candle": "2026-07-03 20:00",
+      "close": 1758.21,
+      "ema": 1987.35565561,
+      "rsi": 52.0,
+      "ema_dist_pct": -11.53
     },
     "SOL/USDT": {
       "signal": "LONG",
       "in_position": true,
-      "candle": "2026-07-03 16:00",
-      "close": 82.48,
-      "ema": 81.66663553,
-      "rsi": 56.4,
-      "ema_dist_pct": 1.0
+      "candle": "2026-07-03 20:00",
+      "close": 82.34,
+      "ema": 81.6654588,
+      "rsi": 56.3,
+      "ema_dist_pct": 0.83
     }
   }
 }
