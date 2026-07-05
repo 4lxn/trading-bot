@@ -1,2 +1,3 @@
 ts_utc,candle,symbol,side,price,amount,value_usdt,mode
 2026-07-03 20:07:06,2026-07-03 16:00,SOL/USDT,BUY,82.48,3.9842061,329.11,dry-run
+2026-07-05 04:07:11,2026-07-05 00:00,SOL/USDT,SELL,80.56,3.9842061,320.49,dry-run
