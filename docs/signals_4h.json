@@ -1,5 +1,5 @@
 {
-  "generated_utc": "2026-07-06 20:07:08",
+  "generated_utc": "2026-07-06 23:07:06",
   "mode": "dry-run",
   "timeframe": "4h",
   "rule": "close > EMA(600) and RSI(84) > 50",
