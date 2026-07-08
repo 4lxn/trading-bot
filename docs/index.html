@@ -95,6 +95,16 @@
   details table { margin-top: 8px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; }
   .foot { color: var(--text-muted); font-size: 12px; line-height: 1.5; }
   .err { color: var(--delta-down); font-size: 14px; }
+  .banner {
+    border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px;
+    margin-bottom: 16px; font-size: 14px; line-height: 1.5;
+    background: var(--surface-1); border-left: 4px solid var(--baseline);
+  }
+  .banner.good { border-left-color: var(--status-good); }
+  .banner.cash { border-left-color: var(--series-1); }
+  .banner b { font-weight: 600; }
+  .legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-secondary); margin: 0 0 8px 4px; }
+  .legend .key { display: inline-block; width: 16px; height: 2px; border-radius: 1px; vertical-align: middle; margin-right: 5px; }
 </style>
 </head>
 <body>
@@ -102,11 +112,17 @@
   <h1>Estrategia 8b — paper trading</h1>
   <p class="sub" id="subtitle">BTC + ETH + SOL · cargando…</p>
 
+  <div class="banner" id="banner"></div>
+
   <div class="tiles" id="tiles"></div>
 
   <div class="card">
-    <h2>Curva de equity — diario (8b)<span id="chip-1d"></span></h2>
+    <h2>Curva de equity — diario (8b) vs comprar y mantener<span id="chip-1d"></span></h2>
     <p class="meta" id="meta-1d"></p>
+    <div class="legend" id="legend-1d">
+      <span><span class="key" style="background:var(--series-1)"></span>8b (estrategia)</span>
+      <span><span class="key" style="background:var(--baseline);height:0;border-top:2px dashed var(--baseline)"></span>Comprar y mantener</span>
+    </div>
     <div id="chart-1d"></div>
     <div class="tooltip" id="tip-1d"></div>
   </div>
@@ -168,13 +184,21 @@ async function get(url, kind) {
 }
 
 async function load() {
-  const [eq, eq4, sig, sig4, tr, tr4, st] = await Promise.all([
+  const [eq, eq4, sig, sig4, tr, tr4, st, hold, hold4] = await Promise.all([
     get("paper_equity.csv"), get("paper_equity_4h.csv"),
     get("signals.json", "json"), get("signals_4h.json", "json"),
     get("trades.csv"), get("trades_4h.csv"), get("status.json", "json"),
+    get("hold_equity.csv"), get("hold_equity_4h.csv"),
   ]);
   if (!eq) throw new Error("no se pudo cargar paper_equity.csv");
-  return { eq, eq4, sig, sig4, tr, tr4, st: st || {} };
+  return { eq, eq4, sig, sig4, tr, tr4, st: st || {}, hold, hold4 };
+}
+
+// Map candle -> total for a hold_equity.csv (aligns with a strategy series).
+function holdMap(hold) {
+  const m = new Map();
+  if (hold) for (const r of hold.rows) m.set(r.date, r.vals[r.vals.length - 1]);
+  return m;
 }
 
 // ---------------------------------------------------------------------------
@@ -209,11 +233,14 @@ function nextCloseTxt(durH) {
 // ---------------------------------------------------------------------------
 // Generic line chart with hover tooltip
 // ---------------------------------------------------------------------------
-function lineChart(chartId, tipId, rows, color, tipRows) {
+function lineChart(chartId, tipId, rows, color, tipRows, overlay) {
   const W = 840, H = 260, m = { t: 16, r: 16, b: 28, l: 56 };
   const iw = W - m.l - m.r, ih = H - m.t - m.b;
   const val = r => r.vals[r.vals.length - 1];
-  let lo = Math.min(...rows.map(val)), hi = Math.max(...rows.map(val));
+  const ov = i => overlay ? overlay.get(rows[i].date) : undefined;  // hold at row i
+  const allY = rows.map(val);
+  if (overlay) rows.forEach((r, i) => { const o = ov(i); if (o !== undefined) allY.push(o); });
+  let lo = Math.min(...allY), hi = Math.max(...allY);
   if (hi - lo < hi * 0.02) { const p = hi * 0.01 || 1; lo -= p; hi += p; }
   const step = niceStep((hi - lo) / 4);
   lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
@@ -235,13 +262,20 @@ function lineChart(chartId, tipId, rows, color, tipRows) {
     ? `<polygon points="${m.l},${y(lo)} ${pts} ${W - m.r},${y(lo)}" fill="${color}" opacity="0.1"/>
        <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2"
          stroke-linejoin="round" stroke-linecap="round"/>` : "";
+  let holdLine = "";
+  if (overlay) {
+    const hpts = rows.map((r, i) => ov(i) !== undefined ? `${x(i)},${y(ov(i))}` : null).filter(Boolean);
+    if (hpts.length > 1)
+      holdLine = `<polyline points="${hpts.join(" ")}" fill="none" stroke="var(--baseline)"
+                    stroke-width="2" stroke-dasharray="5 4" stroke-linejoin="round"/>`;
+  }
   const li = rows.length - 1;
   const end = `<circle cx="${x(li)}" cy="${y(val(rows[li]))}" r="4" fill="${color}"
                  stroke="var(--surface-1)" stroke-width="2"/>`;
   const ch = document.getElementById(chartId);
   ch.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">
     ${g}<line x1="${m.l}" y1="${y(lo)}" x2="${W - m.r}" y2="${y(lo)}" stroke="var(--baseline)" stroke-width="1"/>
-    ${line}${end}<line id="xh" x1="0" y1="${m.t}" x2="0" y2="${m.t + ih}" stroke="var(--baseline)"
+    ${line}${holdLine}${end}<line id="xh" x1="0" y1="${m.t}" x2="0" y2="${m.t + ih}" stroke="var(--baseline)"
       stroke-width="1" visibility="hidden"/>
     <circle id="hdot" r="4" fill="${color}" stroke="var(--surface-1)" stroke-width="2" visibility="hidden"/>
     <rect x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent" id="hit"/></svg>`;
@@ -279,32 +313,58 @@ function niceStep(raw) {
 // ---------------------------------------------------------------------------
 // Sections
 // ---------------------------------------------------------------------------
-function tiles(rows, eq4) {
+function tiles(rows, hold) {
   const total = r => r.vals[r.vals.length - 1];
   const start = total(rows[0]), now = total(rows[rows.length - 1]);
   const pnl = now - start, pct = (now / start - 1) * 100;
   let peak = -Infinity, dd = 0;
   for (const r of rows) { peak = Math.max(peak, total(r)); dd = Math.min(dd, total(r) / peak - 1); }
   const cls = pnl >= 0 ? "up" : "down";
-  let altTile = "";
-  if (eq4 && eq4.rows.length) {
-    const a0 = eq4.rows[0].vals.at(-1), a1 = eq4.rows[eq4.rows.length - 1].vals.at(-1);
-    const acls = a1 - a0 >= 0 ? "up" : "down";
-    altTile = `<div class="tile"><div class="label">Equity 4h (experimento)</div>
-      <div class="value">$${fmt(a1)}</div>
-      <div class="delta ${acls}">${fmtS((a1 / a0 - 1) * 100)}% desde el inicio</div></div>`;
+  let holdTile = "";
+  const hm = holdMap(hold);
+  const holdNow = hm.get(rows[rows.length - 1].date);
+  if (holdNow !== undefined) {
+    const holdPct = (holdNow / 1000 - 1) * 100;   // hold baseline = 1000 at start
+    const diff = pct - holdPct, dcls = diff >= 0 ? "up" : "down";
+    holdTile = `<div class="tile"><div class="label">vs comprar y mantener</div>
+      <div class="value ${dcls}">${fmtS(diff)} pts</div>
+      <div class="delta">hold estaría en ${fmtS(holdPct)}%</div></div>`;
   }
   document.getElementById("tiles").innerHTML = `
     <div class="tile"><div class="label">Equity actual (diario)</div>
       <div class="value hero">$${fmt(now)}</div></div>
     <div class="tile"><div class="label">PnL total</div>
       <div class="value ${cls}">${fmtS(pnl)}</div>
-      <div class="delta ${cls}">${fmtS(pct)}% desde el inicio</div></div>
+      <div class="delta ${cls}">${fmtS(pct)}% desde el inicio</div></div>${holdTile}
     <div class="tile"><div class="label">Max drawdown</div>
       <div class="value">${fmt(dd * 100)}%</div></div>
     <div class="tile"><div class="label">Días de paper</div>
       <div class="value">${rows.length}</div>
-      <div class="delta">desde ${rows[0].date}</div></div>${altTile}`;
+      <div class="delta">desde ${rows[0].date}</div></div>`;
+}
+
+function banner(sig, eqRows, hold) {
+  const el = document.getElementById("banner");
+  if (!sig) { el.style.display = "none"; return; }
+  const syms = Object.values(sig.symbols);
+  const longs = syms.filter(s => s.signal === "LONG");
+  const hm = holdMap(hold);
+  const holdNow = hm.get(eqRows[eqRows.length - 1].date);
+  const holdTxt = holdNow !== undefined
+    ? ` Mientras, comprar y mantener estaría en <b>${fmtS((holdNow / 1000 - 1) * 100)}%</b>.` : "";
+  if (longs.length === 0) {
+    const avg = syms.reduce((a, s) => a + s.ema_dist_pct, 0) / syms.length;
+    el.className = "banner cash";
+    el.innerHTML = `<b>En efectivo (100%).</b> Los ${syms.length} activos están por debajo de su
+      EMA200 (de media ${fmtS(avg)}%), así que la regla manda estar fuera: es una tendencia
+      bajista y la estrategia la está esquivando — por eso la curva está plana en vez de cayendo.
+      No operar aquí <b>es</b> la decisión correcta.${holdTxt}`;
+  } else {
+    el.className = "banner good";
+    el.innerHTML = `<b>${longs.length} de ${syms.length} en posición (LONG):</b>
+      ${longs.map(s => Object.keys(sig.symbols).find(k => sig.symbols[k] === s).split("/")[0]).join(", ")}.
+      La estrategia está capturando tendencia alcista en estos activos.${holdTxt}`;
+  }
 }
 
 function signalsTable(elId, sig, st, eq) {
@@ -381,35 +441,45 @@ function datatable(cols, rows) {
 }
 
 // ---------------------------------------------------------------------------
-load().then(({ eq, eq4, sig, sig4, tr, tr4, st }) => {
+load().then(({ eq, eq4, sig, sig4, tr, tr4, st, hold, hold4 }) => {
   const mode = sig?.mode || "dry-run";
   document.getElementById("subtitle").textContent =
     `BTC + ETH + SOL · ${mode} · última vela diaria: ${eq.rows[eq.rows.length - 1].date}`;
 
-  tiles(eq.rows, eq4);
+  banner(sig, eq.rows, hold);
+  tiles(eq.rows, hold);
 
-  // daily track
+  // daily track (with buy&hold overlay)
+  const hm1 = holdMap(hold);
   const f1 = freshness(eq.rows[eq.rows.length - 1].date, 24, 26);
   chip("chip-1d", f1);
   document.getElementById("meta-1d").textContent =
-    `La vela diaria en curso cierra en ${nextCloseTxt(24)} (00:00 UTC); la curva se actualiza ~5 min después.`;
-  lineChart("chart-1d", "tip-1d", eq.rows, "var(--series-1)", r =>
-    eq.cols.slice(1).map((c, j) =>
-      `<div class="t-row"><span>${c === "total_usdt" ? "Total" : c}</span><b>$${fmt(r.vals[j])}</b></div>`).join(""));
+    `Línea sólida = la estrategia; discontinua = comprar y mantener BTC+ETH+SOL desde el inicio. `
+    + `La vela diaria en curso cierra en ${nextCloseTxt(24)} (00:00 UTC); la curva se actualiza ~5 min después.`;
+  lineChart("chart-1d", "tip-1d", eq.rows, "var(--series-1)", r => {
+    const h = hm1.get(r.date);
+    return eq.cols.slice(1).map((c, j) =>
+      `<div class="t-row"><span>${c === "total_usdt" ? "8b (total)" : c}</span><b>$${fmt(r.vals[j])}</b></div>`).join("")
+      + (h !== undefined ? `<div class="t-row"><span>Comprar y mantener</span><b>$${fmt(h)}</b></div>` : "");
+  }, hm1.size ? hm1 : null);
   if (sig?.rule) document.getElementById("rule-1d").textContent = sig.rule;
   signalsTable("signals-1d", sig, st, eq);
 
   tradesTable(tr, tr4);
 
-  // 4h track
+  // 4h track (with its own buy&hold overlay)
   if (eq4 && eq4.rows.length) {
+    const hm4 = holdMap(hold4);
     const f4 = freshness(eq4.rows[eq4.rows.length - 1].date, 4, 6);
     chip("chip-4h", f4);
     document.getElementById("meta-4h").textContent +=
       ` La vela 4h en curso cierra en ${nextCloseTxt(4)}.`;
-    lineChart("chart-4h", "tip-4h", eq4.rows, "var(--series-2)", r =>
-      eq4.cols.slice(1).map((c, j) =>
-        `<div class="t-row"><span>${c === "total_usdt" ? "Total" : c}</span><b>$${fmt(r.vals[j])}</b></div>`).join(""));
+    lineChart("chart-4h", "tip-4h", eq4.rows, "var(--series-2)", r => {
+      const h = hm4.get(r.date);
+      return eq4.cols.slice(1).map((c, j) =>
+        `<div class="t-row"><span>${c === "total_usdt" ? "4h (total)" : c}</span><b>$${fmt(r.vals[j])}</b></div>`).join("")
+        + (h !== undefined ? `<div class="t-row"><span>Comprar y mantener</span><b>$${fmt(h)}</b></div>` : "");
+    }, hm4.size ? hm4 : null);
     signalsTable("signals-4h", sig4, {}, eq4);
   } else {
     document.getElementById("chart-4h").innerHTML = `<p class="empty">Sin datos del track 4h todavía.</p>`;

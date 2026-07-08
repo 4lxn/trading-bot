@@ -24,7 +24,8 @@ fi
     # 4 hours; previously it only rode along on the once-a-day daily publish,
     # so the dashboard lagged it by up to 24h).
     changed=0
-    for f in paper_equity.csv paper_equity_4h.csv trades.csv trades_4h.csv; do
+    for f in paper_equity.csv paper_equity_4h.csv trades.csv trades_4h.csv \
+             hold_equity.csv hold_equity_4h.csv; do
         if [ -f "state/$f" ] && ! cmp -s "state/$f" "docs/$f"; then
             cp "state/$f" "docs/$f"
             changed=1

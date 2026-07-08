@@ -72,6 +72,8 @@ def config() -> dict:
         "paper_equity_file": os.path.join(STATE_DIR, f"paper_equity{sfx}.csv"),
         "trades_file": os.path.join(STATE_DIR, f"trades{sfx}.csv"),
         "signals_file": os.path.join(STATE_DIR, f"signals{sfx}.json"),
+        "hold_equity_file": os.path.join(STATE_DIR, f"hold_equity{sfx}.csv"),
+        "hold_baseline_file": os.path.join(STATE_DIR, f"hold_baseline{sfx}.json"),
         "mode": os.environ.get("MODE", "dry-run").lower(),
         "api_key": os.environ.get("BINANCE_API_KEY", ""),
         "api_secret": os.environ.get("BINANCE_API_SECRET", ""),
@@ -151,12 +153,21 @@ def compute_signal(exchange: ccxt.binance, cfg: dict, symbol: str) -> tuple[bool
     price = close.iloc[-1]
     is_long = price > ema_val and rsi_val > cfg["rsi_threshold"]
     stamp = datetime.fromtimestamp(df["ts"].iloc[-1] / 1000, tz=timezone.utc)
+
+    def candle_key(ms):
+        d = datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+        return str(d.date()) if cfg["timeframe"] == "1d" else d.strftime("%Y-%m-%d %H:%M")
+
     info = {
         # daily candles are identified by date; intraday ones need the time too
         "candle": stamp.date() if cfg["timeframe"] == "1d" else stamp.strftime("%Y-%m-%d %H:%M"),
         "close": price,
         "ema": ema_val,
         "rsi": rsi_val,
+        # closes keyed by candle (same format as paper_equity's candle column),
+        # used only to anchor the buy&hold benchmark to the paper start date.
+        "closes_by_candle": {candle_key(ts): float(c)
+                             for ts, c in zip(df["ts"], df["close"])},
     }
     return is_long, info
 
@@ -211,6 +222,93 @@ def log_paper_equity(cfg: dict, state: dict, prices: dict, candle) -> None:
     with open(path, "a") as f:
         f.write(f"{candle}," + ",".join(f"{v:.2f}" for v in values) + f",{total:.2f}\n")
     log(f"[dry-run] paper equity at {candle} close: {total:,.2f} USDT")
+
+
+def update_hold_benchmark(cfg: dict, closes_by_symbol: dict, prices: dict, candle) -> None:
+    """Track an equal-weight BUY & HOLD of the same symbols from the paper start,
+    so the dashboard can show what NOT trading (just holding) would have earned.
+
+    This is the honest benchmark for a market-timing strategy: the flat paper
+    line only means something next to what holding would have done. Written to
+    a separate file so it never disturbs the paper-equity schema. Cosmetic —
+    wrapped by the caller so a failure here can never affect trading.
+    """
+    # Anchor the baseline to the FIRST paper candle (holding since day one).
+    start_candle = str(candle)
+    if os.path.exists(cfg["paper_equity_file"]):
+        with open(cfg["paper_equity_file"]) as f:
+            lines = f.readlines()
+        if len(lines) > 1:
+            start_candle = lines[1].split(",")[0]
+
+    baseline = {}
+    if os.path.exists(cfg["hold_baseline_file"]):
+        with open(cfg["hold_baseline_file"]) as f:
+            baseline = json.load(f)
+
+    changed = False
+    for sym in cfg["symbols"]:
+        if sym in baseline:
+            continue
+        cbc = closes_by_symbol.get(sym, {})
+        base_close = cbc.get(start_candle)
+        if base_close is None and cbc:  # start predates fetch window: use oldest
+            base_close = cbc[min(cbc)]
+        if base_close:
+            baseline[sym] = {"candle": start_candle, "close": base_close}
+            changed = True
+    if changed:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        with open(cfg["hold_baseline_file"], "w") as f:
+            json.dump(baseline, f, indent=2)
+
+    if any(sym not in baseline for sym in cfg["symbols"]):
+        return  # can't compute a complete benchmark yet
+
+    share = cfg["paper_usdt"] / len(cfg["symbols"])
+
+    def hold_total_at(candle_key: str):
+        """Equal-weight hold value at a candle, from the fetched closes."""
+        tot = 0.0
+        for sym in cfg["symbols"]:
+            close = closes_by_symbol.get(sym, {}).get(candle_key)
+            if close is None:
+                return None
+            tot += share * close / baseline[sym]["close"]
+        return tot
+
+    now_total = hold_total_at(str(candle))
+    if now_total is None:  # current candle not in fetched closes: use live prices
+        now_total = sum(share * prices[sym] / baseline[sym]["close"] for sym in cfg["symbols"])
+
+    path = cfg["hold_equity_file"]
+    header = "candle,total_usdt"
+    if os.path.exists(path):
+        with open(path) as f:
+            lines = f.readlines()
+        if lines and lines[0].strip() != header:
+            os.rename(path, path + ".old")
+        elif lines and lines[-1].startswith(str(candle)):
+            return  # this candle already logged (idempotent on hourly reruns)
+
+    if not os.path.exists(path):
+        # One-time backfill: reconstruct the benchmark for every candle the
+        # strategy already logged, so the hold line matches the strategy
+        # history from day one (the bot fetched enough closes to do it).
+        with open(path, "w") as f:
+            f.write(header + "\n")
+            if os.path.exists(cfg["paper_equity_file"]):
+                with open(cfg["paper_equity_file"]) as pf:
+                    past = [l.split(",")[0] for l in pf.read().splitlines()[1:]]
+                for c in past:
+                    if c == str(candle):
+                        continue
+                    val = hold_total_at(c)
+                    if val is not None:
+                        f.write(f"{c},{val:.2f}\n")
+
+    with open(path, "a") as f:
+        f.write(f"{candle},{now_total:.2f}\n")
 
 
 def log_trade(cfg: dict, symbol: str, side: str, price: float, amount: float,
@@ -325,10 +423,11 @@ def real_symbol_cycle(exchange: ccxt.binance, cfg: dict, symbol: str,
 def run_cycle(cfg: dict) -> None:
     exchange = make_exchange(cfg)
     state = paper_state(cfg) if cfg["mode"] == "dry-run" else None
-    prices, last_candle, snapshot = {}, None, {}
+    prices, last_candle, snapshot, closes_by_symbol = {}, None, {}, {}
     for symbol in cfg["symbols"]:
         is_long, info = compute_signal(exchange, cfg, symbol)
         prices[symbol], last_candle = info["close"], info["candle"]
+        closes_by_symbol[symbol] = info.pop("closes_by_candle", {})
         log(f"[{cfg['mode']}] {symbol} {cfg['timeframe']} candle {info['candle']}: "
             f"close {info['close']:,.2f}, EMA{cfg['ema_len']} {info['ema']:,.2f}, "
             f"RSI {info['rsi']:.1f} -> signal {'LONG' if is_long else 'OUT'}")
@@ -349,6 +448,11 @@ def run_cycle(cfg: dict) -> None:
     if cfg["mode"] == "dry-run":
         save_paper_state(cfg, state)
         log_paper_equity(cfg, state, prices, last_candle)
+    # Buy&hold benchmark — cosmetic, must never break the trading cycle.
+    try:
+        update_hold_benchmark(cfg, closes_by_symbol, prices, last_candle)
+    except Exception as e:
+        log(f"hold benchmark error (ignored): {e}")
 
 
 def main() -> None:
